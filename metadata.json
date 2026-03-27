@@ -1,9 +1,5 @@
-
 {
-  "name": "PPB3.3 video chiamata",
-  "description": "Sistema professionale per il monitoraggio del ciclo finanziario con cifratura AES-256-GCM e protezione anti-manomissione.",
-  "requestFramePermissions": [
-    "microphone",
-    "camera"
-  ]
+  "name": "Smart Secretary Pro",
+  "description": "A private, local-first AI secretary for document and audio management.",
+  "requestFramePermissions": ["microphone", "geolocation"]
 }
