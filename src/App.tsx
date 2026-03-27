@@ -3,7 +3,7 @@ import { db, Message } from './db/database';
 import { GoogleGenAI } from '@google/genai';
 import mammoth from 'mammoth';
 import { pipeline } from '@xenova/transformers';
-import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText } from 'lucide-react';
+import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import jsPDF from 'jspdf';
 
@@ -80,16 +80,21 @@ export default function App() {
         model: 'gemini-3-flash-preview',
         contents: promptContents,
         config: {
-          systemInstruction: `Sei una segretaria executive di altissimo livello. Analizza l'input dell'utente e rispondi in due parti separate da "---":
-1. Messaggio di cortesia (breve e cordiale).
-2. Messaggio pulito (il contenuto vero e proprio, pronto per essere copiato o inviato su WhatsApp).
+          systemInstruction: `Sei una segretaria executive di altissimo livello. Analizza l'input dell'utente e rispondi in due parti separate ESATTAMENTE da "---":
+1. Messaggio di cortesia (breve nota di lavoro interna).
+2. Messaggio pulito (il contenuto vero e proprio, formattato in modo IMPECCABILE per WhatsApp).
+
+REGOLE PER IL MESSAGGIO WHATSAPP (Parte 2):
+- Usa elenchi puntati, spaziature chiare e tabulazioni per rendere la lettura facile e ordinata su smartphone.
+- Non includere MAI i tuoi commenti iniziali in questa parte.
+- Usa il grassetto (racchiudendo il testo tra asterischi, es. *Testo*) per evidenziare i concetti chiave, come si fa su WhatsApp.
 
 REGOLE FONDAMENTALI E TASSATIVE SULL'ACCURATEZZA:
 - DEVI usare la ricerca web per qualsiasi notizia, evento recente (es. partite di calcio, borsa, cronaca), dato specifico o fatto che richieda verifica.
 - NON INVENTARE MAI NESSUN DATO (ALLUCINAZIONI ZERO). Se la ricerca non produce risultati certi, dichiara apertamente di non avere informazioni verificate.
 - Comportati come un'esperta rigorosa: fornisci solo informazioni suffragate da fonti certe. La precisione è assoluta priorità per i tuoi clienti di alto profilo.
 
-IMPORTANTE: NON usare asterischi, etichette come "AI:", o formattazione speciale per identificarti. Scrivi solo il testo del messaggio.
+IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identificarti. Scrivi solo il testo del messaggio.
 
 Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
           temperature: 0.2, // Abbassato per favorire risposte fattuali e ridurre le allucinazioni
@@ -112,7 +117,7 @@ Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
         generatePDF(content);
         await addMessage({ sender: 'ai', type: 'text', content: '✅ PDF generato e disponibile.' });
       } else {
-        await addMessage({ sender: 'ai', type: 'text', content: politeMsg + '\n\n--- Messaggio pronto per WhatsApp ---\n\n' + cleanMsg });
+        await addMessage({ sender: 'ai', type: 'text', content: politeMsg + '---' + cleanMsg });
       }
     } catch (error) {
       console.error("Errore elaborazione:", error);
@@ -178,15 +183,37 @@ Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
             className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div className={`max-w-[80%] p-3 rounded-lg shadow-sm ${msg.sender === 'user' ? 'bg-[#DCF8C6]' : 'bg-white'}`}>
-              <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-              
-              {msg.sender === 'ai' && msg.content.includes('---') && (
-                <button 
-                  onClick={() => navigator.clipboard.writeText(msg.content.split('---')[1].trim())}
-                  className="mt-2 text-xs text-blue-600 font-bold block"
-                >
-                  Copia contenuto pulito
-                </button>
+              {msg.sender === 'ai' && msg.content.includes('---') ? (
+                <div className="flex flex-col">
+                  {/* Note interne */}
+                  <div className="text-xs text-gray-500 italic border-b border-gray-200 pb-2 mb-2">
+                    <span className="font-semibold not-italic text-gray-600">Note interne: </span>
+                    <span className="whitespace-pre-wrap">{msg.content.split('---')[0].trim()}</span>
+                  </div>
+                  
+                  {/* Contenuto WhatsApp */}
+                  <div className="text-sm whitespace-pre-wrap text-gray-800 font-sans">
+                    {msg.content.split('---').slice(1).join('---').replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim()}
+                  </div>
+                  
+                  {/* Pulsanti */}
+                  <div className="mt-3 flex gap-4 border-t border-gray-100 pt-2">
+                    <button 
+                      onClick={() => navigator.clipboard.writeText(msg.content.split('---').slice(1).join('---').replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())}
+                      className="text-xs text-blue-600 font-bold flex items-center gap-1"
+                    >
+                      <Copy className="w-3 h-3" /> Copia
+                    </button>
+                    <button 
+                      onClick={() => shareToWhatsApp(msg.content.split('---').slice(1).join('---').replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())} 
+                      className="text-xs text-green-600 font-bold flex items-center gap-1"
+                    >
+                      <Share2 className="w-3 h-3" /> Condividi
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
               )}
               
               <div className="mt-2 text-[10px] text-gray-500 flex justify-between gap-4">
@@ -194,10 +221,10 @@ Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
                 <span>{msg.location}</span>
               </div>
 
-              {msg.sender === 'ai' && !msg.content.includes('PDF') && (
-                <div className="mt-2 flex gap-2">
-                  <button onClick={() => shareToWhatsApp(msg.content.split('---').pop() || msg.content)} className="text-xs text-gray-500 flex items-center gap-1">
-                    <Share2 className="w-3 h-3" /> WhatsApp
+              {msg.sender === 'ai' && !msg.content.includes('---') && !msg.content.includes('PDF') && (
+                <div className="mt-2 flex gap-2 border-t border-gray-100 pt-2">
+                  <button onClick={() => shareToWhatsApp(msg.content)} className="text-xs text-green-600 font-bold flex items-center gap-1">
+                    <Share2 className="w-3 h-3" /> Condividi
                   </button>
                 </div>
               )}
