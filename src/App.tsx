@@ -50,42 +50,49 @@ export default function App() {
   const processInput = async (input: string, type: 'text' | 'audio' | 'file', metadata?: string) => {
     await addMessage({ sender: 'user', type, content: input, metadata });
     setIsLoading(true);
+    setQuery('');
 
-    const allContext = messages.map(m => m.content).join('\n\n');
+    try {
+      const allContext = messages.map(m => m.content).join('\n\n');
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: `Sei una segretaria intelligente. Analizza l'input dell'utente e rispondi in due parti separate da "---":
-      1. Messaggio di cortesia (breve e cordiale).
-      2. Messaggio pulito (il contenuto vero e proprio, pronto per essere copiato o inviato su WhatsApp).
-      
-      IMPORTANTE: NON usare asterischi, etichette come "AI:", o formattazione speciale per identificarti. Scrivi solo il testo del messaggio.
-      
-      Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".
-      
-      Contesto: ${allContext}
-      Input: ${input}
-      `,
-    });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: `Sei una segretaria intelligente. Analizza l'input dell'utente e rispondi in due parti separate da "---":
+        1. Messaggio di cortesia (breve e cordiale).
+        2. Messaggio pulito (il contenuto vero e proprio, pronto per essere copiato o inviato su WhatsApp).
+        
+        IMPORTANTE: NON usare asterischi, etichette come "AI:", o formattazione speciale per identificarti. Scrivi solo il testo del messaggio.
+        
+        Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".
+        
+        Contesto: ${allContext}
+        Input: ${input}
+        `,
+      });
 
-    const fullResponse = response.text || '';
-    let politeMsg = fullResponse;
-    let cleanMsg = fullResponse;
+      const fullResponse = response.text || '';
+      let politeMsg = fullResponse;
+      let cleanMsg = fullResponse;
 
-    if (fullResponse.includes('---')) {
-      const parts = fullResponse.split('---');
-      politeMsg = parts[0].trim();
-      cleanMsg = parts[1].trim();
+      if (fullResponse.includes('---')) {
+        const parts = fullResponse.split('---');
+        politeMsg = parts[0].trim();
+        cleanMsg = parts[1].trim();
+      }
+
+      if (fullResponse.startsWith('PDF:')) {
+        const content = fullResponse.replace('PDF:', '').trim();
+        generatePDF(content);
+        await addMessage({ sender: 'ai', type: 'text', content: '✅ PDF generato e disponibile.' });
+      } else {
+        await addMessage({ sender: 'ai', type: 'text', content: politeMsg + '\n\n--- Messaggio pronto per WhatsApp ---\n\n' + cleanMsg });
+      }
+    } catch (error) {
+      console.error("Errore elaborazione:", error);
+      await addMessage({ sender: 'ai', type: 'text', content: '⚠️ Si è verificato un errore. Riprova.' });
+    } finally {
+      setIsLoading(false);
     }
-
-    if (fullResponse.startsWith('PDF:')) {
-      const content = fullResponse.replace('PDF:', '').trim();
-      generatePDF(content);
-      await addMessage({ sender: 'ai', type: 'text', content: '✅ PDF generato e disponibile.' });
-    } else {
-      await addMessage({ sender: 'ai', type: 'text', content: politeMsg + '\n\n--- Messaggio pronto per WhatsApp ---\n\n' + cleanMsg });
-    }
-    setIsLoading(false);
   };
 
   const startRecording = async () => {
