@@ -53,21 +53,42 @@ export default function App() {
     setQuery('');
 
     try {
-      const allContext = messages.map(m => m.content).join('\n\n');
+      // 1. Memoria a Breve Termine: ultimi 10 messaggi (velocissimo)
+      const recentMessages = messages.slice(-10);
+      const recentContext = recentMessages.map(m => `${m.sender === 'user' ? 'Utente' : 'Segretaria'}: ${m.content}`).join('\n');
+
+      // 2. Memoria a Lungo Termine (Ricerca Intelligente): cerchiamo parole chiave nei messaggi vecchi
+      const keywords = input.toLowerCase().split(/\s+/).filter(w => w.length > 3); // Parole con più di 3 lettere
+      const olderMessages = messages.slice(0, -10);
+      
+      let relevantPast: typeof messages = [];
+      if (keywords.length > 0) {
+        relevantPast = olderMessages.filter(m => 
+          keywords.some(k => m.content.toLowerCase().includes(k))
+        ).slice(-5); // Prendiamo i 5 messaggi vecchi più pertinenti
+      }
+
+      // Costruiamo il prompt intelligente
+      let promptContents = `Storico recente:\n${recentContext}\n\n`;
+      if (relevantPast.length > 0) {
+        const pastContext = relevantPast.map(m => `[Del ${m.createdAt.toLocaleDateString()}] ${m.sender === 'user' ? 'Utente' : 'Segretaria'}: ${m.content}`).join('\n');
+        promptContents += `Memoria storica pertinente a questa richiesta:\n${pastContext}\n\n`;
+      }
+      promptContents += `Nuova richiesta: ${input}`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Sei una segretaria intelligente. Analizza l'input dell'utente e rispondi in due parti separate da "---":
-        1. Messaggio di cortesia (breve e cordiale).
-        2. Messaggio pulito (il contenuto vero e proprio, pronto per essere copiato o inviato su WhatsApp).
-        
-        IMPORTANTE: NON usare asterischi, etichette come "AI:", o formattazione speciale per identificarti. Scrivi solo il testo del messaggio.
-        
-        Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".
-        
-        Contesto: ${allContext}
-        Input: ${input}
-        `,
+        contents: promptContents,
+        config: {
+          systemInstruction: `Sei una segretaria intelligente e veloce. Analizza l'input dell'utente e rispondi in due parti separate da "---":
+1. Messaggio di cortesia (breve e cordiale).
+2. Messaggio pulito (il contenuto vero e proprio, pronto per essere copiato o inviato su WhatsApp).
+
+IMPORTANTE: NON usare asterischi, etichette come "AI:", o formattazione speciale per identificarti. Scrivi solo il testo del messaggio.
+
+Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
+          temperature: 0.7,
+        }
       });
 
       const fullResponse = response.text || '';
