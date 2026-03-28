@@ -22,6 +22,7 @@ export default function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const latestTranscriptRef = useRef('');
+  const isIntentionallyStoppedRef = useRef(false);
 
   useEffect(() => {
     fetchMessages();
@@ -112,6 +113,7 @@ export default function App() {
 
   const processInput = async (input: string, type: 'text' | 'audio' | 'file', metadata?: string, fileData?: { data: string, mimeType: string, name: string }, passToGemini: boolean = true) => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    isIntentionallyStoppedRef.current = true;
     stopListening();
     
     initAudio();
@@ -126,6 +128,7 @@ export default function App() {
     });
     setIsLoading(true);
     setQuery('');
+    latestTranscriptRef.current = '';
 
     try {
       // 1. Memoria a Breve Termine: ultimi 10 messaggi (velocissimo)
@@ -250,6 +253,7 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
     }
 
     stopListening();
+    isIntentionallyStoppedRef.current = false;
 
     const recognition = new SpeechRecognition();
     recognitionRef.current = recognition;
@@ -257,8 +261,7 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
     recognition.interimResults = true;
     recognition.lang = 'it-IT';
 
-    initialQueryRef.current = query;
-    latestTranscriptRef.current = query;
+    initialQueryRef.current = latestTranscriptRef.current;
 
     recognition.onstart = () => {
       if (recognitionRef.current === recognition) {
@@ -269,14 +272,14 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
     recognition.onresult = (event: any) => {
       if (recognitionRef.current !== recognition) return;
 
-      const transcript = Array.from(event.results)
+      const currentTranscript = Array.from(event.results)
         .map((result: any) => result[0].transcript.trim())
         .filter(Boolean)
         .join(' ');
       
       const currentText = initialQueryRef.current 
-        ? initialQueryRef.current + ' ' + transcript
-        : transcript;
+        ? initialQueryRef.current + ' ' + currentTranscript
+        : currentTranscript;
         
       setQuery(currentText);
       latestTranscriptRef.current = currentText;
@@ -284,40 +287,47 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       
       silenceTimerRef.current = setTimeout(() => {
-        if (recognitionRef.current === recognition) {
-          stopListening();
-          if (latestTranscriptRef.current.trim()) {
-            const textToSend = latestTranscriptRef.current;
-            latestTranscriptRef.current = '';
-            processInput(textToSend, 'text');
-          }
+        isIntentionallyStoppedRef.current = true;
+        stopListening();
+        if (latestTranscriptRef.current.trim()) {
+          const textToSend = latestTranscriptRef.current;
+          latestTranscriptRef.current = '';
+          setQuery('');
+          processInput(textToSend, 'text');
         }
-      }, 2000);
+      }, 4000);
     };
 
     recognition.onerror = (event: any) => {
       if (recognitionRef.current !== recognition) return;
       console.error("Errore riconoscimento vocale:", event.error);
-      stopListening();
+      if (event.error === 'not-allowed') {
+        isIntentionallyStoppedRef.current = true;
+        stopListening();
+      }
     };
 
     recognition.onend = () => {
       if (recognitionRef.current === recognition) {
-        stopListening();
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current);
-          silenceTimerRef.current = null;
-          
-          if (latestTranscriptRef.current.trim()) {
-            const textToSend = latestTranscriptRef.current;
-            latestTranscriptRef.current = '';
-            processInput(textToSend, 'text');
+        recognitionRef.current = null;
+        if (!isIntentionallyStoppedRef.current) {
+          try {
+            startListening();
+          } catch (e) {
+            console.error("Errore riavvio:", e);
+            setIsRecording(false);
           }
+        } else {
+          setIsRecording(false);
         }
       }
     };
 
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (e) {
+      console.error("Errore avvio:", e);
+    }
   };
 
   const stopListening = () => {
@@ -330,6 +340,7 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
   };
 
   const handleManualStop = () => {
+    isIntentionallyStoppedRef.current = true;
     stopListening();
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
@@ -338,9 +349,13 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
   };
 
   const handleSend = () => {
+    isIntentionallyStoppedRef.current = true;
     handleManualStop();
     if (query.trim()) {
-      processInput(query, 'text');
+      const textToSend = query;
+      latestTranscriptRef.current = '';
+      setQuery('');
+      processInput(textToSend, 'text');
     }
   };
 
@@ -524,7 +539,10 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
             className="flex-grow p-2 rounded-full border border-gray-300"
             placeholder="Scrivi un messaggio..."
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              latestTranscriptRef.current = e.target.value;
+            }}
             onKeyPress={(e) => e.key === 'Enter' && handleSend()}
           />
           
