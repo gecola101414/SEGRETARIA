@@ -8,6 +8,9 @@ export interface Message {
   metadata?: string; // e.g., filename or original audio name
   createdAt: Date;
   location?: string; // Added location field
+  fileData?: string; // base64 string for downloading
+  fileMimeType?: string;
+  fileName?: string;
 }
 
 class SmartSecretaryDB extends Dexie {
@@ -15,7 +18,7 @@ class SmartSecretaryDB extends Dexie {
 
   constructor() {
     super('SmartSecretaryDB');
-    this.version(2).stores({
+    this.version(3).stores({
       messages: '++id, sender, type, createdAt'
     });
   }

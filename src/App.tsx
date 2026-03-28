@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, Message } from './db/database';
 import { GoogleGenAI } from '@google/genai';
 import mammoth from 'mammoth';
+import * as XLSX from 'xlsx';
 import { pipeline } from '@xenova/transformers';
-import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy } from 'lucide-react';
+import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import jsPDF from 'jspdf';
 
@@ -47,8 +48,16 @@ export default function App() {
     fetchMessages();
   };
 
-  const processInput = async (input: string, type: 'text' | 'audio' | 'file', metadata?: string) => {
-    await addMessage({ sender: 'user', type, content: input, metadata });
+  const processInput = async (input: string, type: 'text' | 'audio' | 'file', metadata?: string, fileData?: { data: string, mimeType: string, name: string }, passToGemini: boolean = true) => {
+    await addMessage({ 
+      sender: 'user', 
+      type, 
+      content: type === 'file' && fileData ? `File allegato: ${fileData.name}` : input, 
+      metadata,
+      fileData: fileData?.data,
+      fileMimeType: fileData?.mimeType,
+      fileName: fileData?.name
+    });
     setIsLoading(true);
     setQuery('');
 
@@ -69,26 +78,37 @@ export default function App() {
       }
 
       // Costruiamo il prompt intelligente
-      let promptContents = `Storico recente:\n${recentContext}\n\n`;
+      let promptContents: any[] = [`Storico recente:\n${recentContext}\n\n`];
       if (relevantPast.length > 0) {
         const pastContext = relevantPast.map(m => `[Del ${m.createdAt.toLocaleDateString()}] ${m.sender === 'user' ? 'Utente' : 'Segretaria'}: ${m.content}`).join('\n');
-        promptContents += `Memoria storica pertinente a questa richiesta:\n${pastContext}\n\n`;
+        promptContents[0] += `Memoria storica pertinente a questa richiesta:\n${pastContext}\n\n`;
       }
-      promptContents += `Nuova richiesta: ${input}`;
+      promptContents[0] += `Nuova richiesta: ${input}`;
+
+      if (fileData && passToGemini) {
+        promptContents.push({
+          inlineData: {
+            data: fileData.data,
+            mimeType: fileData.mimeType
+          }
+        });
+      }
 
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: promptContents,
         config: {
           systemInstruction: `Sei una Executive Assistant AI di altissimo livello, progettata per top manager e figure di spicco della finanza di Milano. La tua intelligenza è brillante, analitica, affilata e orientata al risultato.
-Analizza l'input dell'utente e rispondi in due parti separate ESATTAMENTE da "---":
+Analizza l'input dell'utente (che può includere file PDF, Excel o Word) e rispondi in due parti separate ESATTAMENTE da "---":
 1. Messaggio di cortesia (breve nota di lavoro interna, dritta al punto).
 2. Messaggio pulito (il contenuto vero e proprio, formattato in modo IMPECCABILE per WhatsApp).
 
 REGOLE DI COGNIZIONE E FOCUS (TASSATIVE):
-- LASER FOCUS: Rispondi ESATTAMENTE e SOLO alla richiesta dell'utente. Niente divagazioni.
-- DATI PERSONALI: Se l'utente chiede della *sua* agenda, dei *suoi* appuntamenti o dati personali, basati ESCLUSIVAMENTE sulla "Memoria storica" e sullo "Storico recente" forniti nel prompt. Se l'informazione non c'è, rispondi con eleganza che non risulta nei tuoi archivi attuali. NON INVENTARE e NON USARE IL WEB per cercare l'agenda personale dell'utente.
-- RICERCA WEB MISURATA: Usa la ricerca web SOLO per mercati finanziari, notizie pubbliche o fatti oggettivi esplicitamente richiesti. Se aggiungi un commento di contesto, deve essere brevissimo (una riga) e strettamente pertinente.
+- LASER FOCUS: Rispondi ESATTAMENTE e SOLO alla richiesta dell'utente. Niente divagazioni. TASSATIVO.
+- ANALISI FILE: Se l'utente fornisce un file (PDF, Excel, Word), analizzalo con estrema cura e precisione. Estrai i dati richiesti senza inventare nulla.
+- DIVAGAZIONI VIETATE: Se ritieni utile aggiungere un'informazione non richiesta, NON FARLO nel messaggio principale. Aggiungi invece una terza sezione separata da "===DIVAGAZIONE===" con il tuo commento extra.
+- DATI PERSONALI: Basati ESCLUSIVAMENTE sulla "Memoria storica" e sullo "Storico recente". NON INVENTARE.
+- RICERCA WEB MISURATA: Usa la ricerca web SOLO per mercati finanziari, notizie pubbliche o fatti oggettivi esplicitamente richiesti.
 - STILE: Sii brillante, concisa, professionale. Stile "Milano Finanza". Zero fronzoli, massima resa.
 
 REGOLE PER IL MESSAGGIO WHATSAPP (Parte 2):
@@ -96,9 +116,7 @@ REGOLE PER IL MESSAGGIO WHATSAPP (Parte 2):
 - Non includere MAI i tuoi commenti iniziali in questa parte.
 - Usa il grassetto (racchiudendo il testo tra asterischi, es. *Testo*) per evidenziare i concetti chiave.
 
-IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identificarti. Scrivi solo il testo del messaggio.
-
-Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
+IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identificarti. Scrivi solo il testo del messaggio.`,
           temperature: 0.1, // Estremamente basso per massima precisione, logica ferrea e zero divagazioni
           tools: [{ googleSearch: {} }], // Abilita la ricerca Google in tempo reale
         }
@@ -107,19 +125,25 @@ Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
       const fullResponse = response.text || '';
       let politeMsg = fullResponse;
       let cleanMsg = fullResponse;
+      let digressionMsg = '';
 
-      if (fullResponse.includes('---')) {
-        const parts = fullResponse.split('---');
+      let mainResponse = fullResponse;
+      if (fullResponse.includes('===DIVAGAZIONE===')) {
+        const parts = fullResponse.split('===DIVAGAZIONE===');
+        mainResponse = parts[0].trim();
+        digressionMsg = parts[1].trim();
+      }
+
+      if (mainResponse.includes('---')) {
+        const parts = mainResponse.split('---');
         politeMsg = parts[0].trim();
         cleanMsg = parts[1].trim();
       }
 
-      if (fullResponse.startsWith('PDF:')) {
-        const content = fullResponse.replace('PDF:', '').trim();
-        generatePDF(content);
-        await addMessage({ sender: 'ai', type: 'text', content: '✅ PDF generato e disponibile.' });
-      } else {
-        await addMessage({ sender: 'ai', type: 'text', content: politeMsg + '---' + cleanMsg });
+      await addMessage({ sender: 'ai', type: 'text', content: politeMsg + '---' + cleanMsg });
+      
+      if (digressionMsg) {
+        await addMessage({ sender: 'ai', type: 'text', content: '💡 *Nota aggiuntiva della Segretaria:*\n\n' + digressionMsg });
       }
     } catch (error) {
       console.error("Errore elaborazione:", error);
@@ -160,9 +184,72 @@ Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
     setIsRecording(false);
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setIsLoading(true);
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64 = (reader.result as string).split(',')[1];
+        
+        if (file.name.endsWith('.pdf')) {
+          await processInput(`Analizza questo documento PDF: ${file.name}`, 'file', file.name, {
+            data: base64,
+            mimeType: 'application/pdf',
+            name: file.name
+          }, true);
+        } else if (file.name.endsWith('.docx')) {
+          const arrayBuffer = await file.arrayBuffer();
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          const fileText = result.value;
+          await processInput(`Analizza questo documento Word (${file.name}):\n\n${fileText}`, 'file', file.name, {
+            data: base64,
+            mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            name: file.name
+          }, false);
+        } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+          const arrayBuffer = await file.arrayBuffer();
+          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const fileText = XLSX.utils.sheet_to_csv(firstSheet);
+          await processInput(`Analizza questo foglio Excel (${file.name}):\n\n${fileText}`, 'file', file.name, {
+            data: base64,
+            mimeType: file.name.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/vnd.ms-excel',
+            name: file.name
+          }, false);
+        } else if (file.name.endsWith('.txt')) {
+          const fileText = await file.text();
+          await processInput(`Analizza questo file di testo (${file.name}):\n\n${fileText}`, 'file', file.name, {
+            data: base64,
+            mimeType: 'text/plain',
+            name: file.name
+          }, false);
+        } else {
+          alert('Formato file non supportato. Usa PDF, DOCX, XLSX o TXT.');
+        }
+        setIsLoading(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (error) {
+      console.error(error);
+      setIsLoading(false);
+    }
+  };
+
   const generatePDF = (content: string) => {
     const doc = new jsPDF();
-    doc.text(content, 10, 10);
+    const splitText = doc.splitTextToSize(content, 180);
+    let y = 15;
+    for (let i = 0; i < splitText.length; i++) {
+      if (y > 280) {
+        doc.addPage();
+        y = 15;
+      }
+      doc.text(splitText[i], 15, y);
+      y += 7;
+    }
     doc.save('documento.pdf');
   };
 
@@ -199,7 +286,7 @@ Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
                   </div>
                   
                   {/* Pulsanti */}
-                  <div className="mt-3 flex gap-4 border-t border-gray-100 pt-2">
+                  <div className="mt-3 flex gap-4 border-t border-gray-100 pt-2 flex-wrap">
                     <button 
                       onClick={() => navigator.clipboard.writeText(msg.content.split('---').slice(1).join('---').replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())}
                       className="text-xs text-blue-600 font-bold flex items-center gap-1"
@@ -212,10 +299,27 @@ Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
                     >
                       <Share2 className="w-3 h-3" /> Condividi
                     </button>
+                    <button 
+                      onClick={() => generatePDF(msg.content.split('---').slice(1).join('---').replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())} 
+                      className="text-xs text-red-600 font-bold flex items-center gap-1"
+                    >
+                      <FileText className="w-3 h-3" /> Scarica PDF
+                    </button>
                   </div>
                 </div>
               ) : (
-                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                <div className="flex flex-col">
+                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                  {msg.type === 'file' && msg.fileData && (
+                    <a 
+                      href={`data:${msg.fileMimeType};base64,${msg.fileData}`} 
+                      download={msg.fileName}
+                      className="mt-2 text-xs text-blue-600 font-bold flex items-center gap-1 bg-blue-50 p-2 rounded w-max"
+                    >
+                      <Download className="w-3 h-3" /> Scarica {msg.fileName}
+                    </a>
+                  )}
+                </div>
               )}
               
               <div className="mt-2 text-[10px] text-gray-500 flex justify-between gap-4">
@@ -246,10 +350,7 @@ Se l'utente chiede un PDF, rispondi solo "PDF: [Contenuto pulito]".`,
           </button>
           <button className="p-2 text-gray-500" onClick={() => fileInputRef.current?.click()}>
             <Upload className="w-6 h-6" />
-            <input type="file" ref={fileInputRef} className="hidden" accept=".txt,.docx" onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) processInput(`File: ${file.name}`, 'file');
-            }} />
+            <input type="file" ref={fileInputRef} className="hidden" accept=".txt,.docx,.pdf,.xlsx,.xls" onChange={handleFileUpload} />
           </button>
           
           <input
