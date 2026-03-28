@@ -1,14 +1,59 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db, Message } from './db/database';
-import { GoogleGenAI } from '@google/genai';
+import { db, Message, Appointment, DocumentArchive } from './db/database';
+import { GoogleGenAI, FunctionDeclaration, Type } from '@google/genai';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import { pipeline } from '@xenova/transformers';
 import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy, Download, Volume2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import jsPDF from 'jspdf';
+import { format, parseISO, isValid } from 'date-fns';
+import { it } from 'date-fns/locale';
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+
+GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+
+const addAppointmentTool: FunctionDeclaration = {
+  name: 'addAppointment',
+  description: 'Aggiunge un nuovo appuntamento o evento in agenda.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING, description: 'Titolo o oggetto dell\'appuntamento' },
+      date: { type: Type.STRING, description: 'Data dell\'appuntamento nel formato YYYY-MM-DD' },
+      time: { type: Type.STRING, description: 'Ora dell\'appuntamento nel formato HH:MM' },
+      description: { type: Type.STRING, description: 'Dettagli aggiuntivi, note o partecipanti' }
+    },
+    required: ['title', 'date', 'time']
+  }
+};
+
+const getAppointmentsTool: FunctionDeclaration = {
+  name: 'getAppointments',
+  description: 'Recupera gli appuntamenti in agenda per una data specifica o un intervallo di date.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      startDate: { type: Type.STRING, description: 'Data di inizio nel formato YYYY-MM-DD' },
+      endDate: { type: Type.STRING, description: 'Data di fine nel formato YYYY-MM-DD (opzionale, se non specificata cerca solo per startDate)' }
+    },
+    required: ['startDate']
+  }
+};
+
+const searchDocumentsTool: FunctionDeclaration = {
+  name: 'searchDocuments',
+  description: 'Cerca informazioni nei documenti caricati in archivio tramite parole chiave.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: { type: Type.STRING, description: 'Parole chiave da cercare nei documenti' }
+    },
+    required: ['query']
+  }
+};
 
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -111,6 +156,71 @@ export default function App() {
     });
   };
 
+  const executeFunctionCalls = async (functionCalls: any[]) => {
+    const responses = [];
+    for (const call of functionCalls) {
+      try {
+        if (call.name === 'addAppointment') {
+          const { title, date, time, description } = call.args;
+          await db.appointments.add({ title, date, time, description: description || '', createdAt: new Date() });
+          responses.push({
+            name: call.name,
+            response: { success: true, message: `Appuntamento aggiunto con successo: ${title} il ${date} alle ${time}` }
+          });
+        } else if (call.name === 'getAppointments') {
+          const { startDate, endDate } = call.args;
+          let query = db.appointments.where('date').equals(startDate);
+          if (endDate) {
+             query = db.appointments.where('date').between(startDate, endDate, true, true);
+          }
+          const appointments = await query.toArray();
+          responses.push({
+            name: call.name,
+            response: { appointments }
+          });
+        } else if (call.name === 'searchDocuments') {
+          const { query } = call.args;
+          const docs = await db.documents.toArray();
+          const keywords = query.toLowerCase().split(' ');
+          
+          const results = docs.map(d => {
+            const text = d.textContent.toLowerCase();
+            let matchIndex = -1;
+            for (const k of keywords) {
+              const idx = text.indexOf(k);
+              if (idx !== -1) {
+                matchIndex = idx;
+                break;
+              }
+            }
+            
+            if (matchIndex !== -1) {
+              const start = Math.max(0, matchIndex - 500);
+              const end = Math.min(d.textContent.length, matchIndex + 1000);
+              return {
+                fileName: d.fileName,
+                snippet: d.textContent.substring(start, end) + '...'
+              };
+            }
+            return null;
+          }).filter(Boolean);
+
+          responses.push({
+            name: call.name,
+            response: { results }
+          });
+        }
+      } catch (err) {
+        console.error(`Errore esecuzione tool ${call.name}:`, err);
+        responses.push({
+          name: call.name,
+          response: { success: false, error: String(err) }
+        });
+      }
+    }
+    return responses;
+  };
+
   const processInput = async (input: string, type: 'text' | 'audio' | 'file', metadata?: string, fileData?: { data: string, mimeType: string, name: string }, passToGemini: boolean = true) => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     isIntentionallyStoppedRef.current = true;
@@ -147,7 +257,8 @@ export default function App() {
       }
 
       // Costruiamo il prompt intelligente
-      let promptContents: any[] = [`Storico recente:\n${recentContext}\n\n`];
+      let promptContents: any[] = [`Oggi è il ${format(new Date(), "dd MMMM yyyy", { locale: it })}.
+Storico recente:\n${recentContext}\n\n`];
       if (relevantPast.length > 0) {
         const pastContext = relevantPast.map(m => `[Del ${m.createdAt.toLocaleDateString()}] ${m.sender === 'user' ? 'Utente' : 'Segretaria'}: ${m.content}`).join('\n');
         promptContents[0] += `Memoria storica pertinente a questa richiesta:\n${pastContext}\n\n`;
@@ -163,16 +274,14 @@ export default function App() {
         });
       }
 
-      const responseStream = await ai.models.generateContentStream({
-        model: 'gemini-3-flash-preview',
-        contents: promptContents,
-        config: {
-          systemInstruction: `Sei una Executive Assistant AI di altissimo livello, progettata per top manager e figure di spicco della finanza di Milano. La tua intelligenza è brillante, analitica, affilata e orientata al risultato.
+      const systemInstruction = `Sei una Executive Assistant AI di altissimo livello, progettata per top manager e figure di spicco della finanza di Milano. La tua intelligenza è brillante, analitica, affilata e orientata al risultato.
 Analizza l'input dell'utente (che può includere file PDF, Excel o Word) e rispondi in due parti separate ESATTAMENTE da "---":
 1. Messaggio di cortesia (breve nota di lavoro interna, dritta al punto).
 2. Messaggio pulito (il contenuto vero e proprio, formattato in modo IMPECCABILE per WhatsApp).
 
 REGOLE DI COGNIZIONE E FOCUS (TASSATIVE):
+- AGENDA INFALLIBILE: Hai a disposizione degli strumenti (tools) per gestire l'agenda. USALI SEMPRE per aggiungere o cercare appuntamenti. Non affidarti solo alla memoria storica per l'agenda. Se l'utente chiede "cosa ho domani?", usa il tool getAppointments. Se l'utente dice "fissa un appuntamento", usa addAppointment. Per garantire un'agenda infallibile (zero errori), incrocia i dati: verifica sempre che le informazioni recuperate dal database (tramite getAppointments) coincidano con il contesto della conversazione. Se ci sono discrepanze, chiedi chiarimenti.
+- ARCHIVIO DOCUMENTI: Hai a disposizione il tool searchDocuments. Usalo per cercare informazioni nei documenti caricati in precedenza. Anche qui, incrocia i risultati della ricerca con la memoria storica per fornire risposte strategiche e precise.
 - LASER FOCUS: Rispondi ESATTAMENTE e SOLO alla richiesta dell'utente. Niente divagazioni. TASSATIVO.
 - ANALISI FILE: Se l'utente fornisce un file (PDF, Excel, Word), analizzalo con estrema cura e precisione. Estrai i dati richiesti senza inventare nulla.
 - DIVAGAZIONI VIETATE: Se ritieni utile aggiungere un'informazione non richiesta, NON FARLO nel messaggio principale. Aggiungi invece una terza sezione separata da "===DIVAGAZIONE===" con il tuo commento extra.
@@ -185,9 +294,19 @@ REGOLE PER IL MESSAGGIO WHATSAPP (Parte 2):
 - Non includere MAI i tuoi commenti iniziali in questa parte.
 - Usa il grassetto (racchiudendo il testo tra asterischi, es. *Testo*) per evidenziare i concetti chiave.
 
-IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identificarti. Scrivi solo il testo del messaggio.`,
+IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identificarti. Scrivi solo il testo del messaggio.`;
+
+      let responseStream = await ai.models.generateContentStream({
+        model: 'gemini-3-flash-preview',
+        contents: promptContents,
+        config: {
+          systemInstruction,
           temperature: 0.1, // Estremamente basso per massima precisione, logica ferrea e zero divagazioni
-          tools: [{ googleSearch: {} }], // Abilita la ricerca Google in tempo reale
+          tools: [
+            { googleSearch: {} },
+            { functionDeclarations: [addAppointmentTool, getAppointmentsTool, searchDocumentsTool] }
+          ],
+          toolConfig: { includeServerSideToolInvocations: true }
         }
       });
 
@@ -196,17 +315,73 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
       let cleanMsg = '';
       let digressionMsg = '';
       let hasPlayedAudio = false;
+      let functionCallsToExecute: any[] = [];
 
       for await (const chunk of responseStream) {
-        fullResponse += chunk.text;
+        if (chunk.functionCalls && chunk.functionCalls.length > 0) {
+          functionCallsToExecute.push(...chunk.functionCalls);
+        }
+        if (chunk.text) {
+          fullResponse += chunk.text;
+          
+          if (!hasPlayedAudio && fullResponse.includes('---')) {
+            politeMsg = fullResponse.split('---')[0].trim();
+            if (politeMsg) {
+              hasPlayedAudio = true;
+              playAudio(politeMsg).then(() => {
+                startListening();
+              });
+            }
+          }
+        }
+      }
+
+      if (functionCallsToExecute.length > 0) {
+        const functionResponses = await executeFunctionCalls(functionCallsToExecute);
         
-        if (!hasPlayedAudio && fullResponse.includes('---')) {
-          politeMsg = fullResponse.split('---')[0].trim();
-          if (politeMsg) {
-            hasPlayedAudio = true;
-            playAudio(politeMsg).then(() => {
-              startListening();
-            });
+        const assistantContent = {
+          role: 'model',
+          parts: functionCallsToExecute.map(call => ({
+            functionCall: call
+          }))
+        };
+        
+        const userContent = {
+          role: 'user',
+          parts: functionResponses.map(res => ({
+            functionResponse: res
+          }))
+        };
+
+        promptContents.push(assistantContent, userContent);
+
+        responseStream = await ai.models.generateContentStream({
+          model: 'gemini-3-flash-preview',
+          contents: promptContents,
+          config: {
+            systemInstruction,
+            temperature: 0.1,
+            tools: [
+              { googleSearch: {} },
+              { functionDeclarations: [addAppointmentTool, getAppointmentsTool, searchDocumentsTool] }
+            ],
+            toolConfig: { includeServerSideToolInvocations: true }
+          }
+        });
+
+        for await (const chunk of responseStream) {
+          if (chunk.text) {
+            fullResponse += chunk.text;
+            
+            if (!hasPlayedAudio && fullResponse.includes('---')) {
+              politeMsg = fullResponse.split('---')[0].trim();
+              if (politeMsg) {
+                hasPlayedAudio = true;
+                playAudio(politeMsg).then(() => {
+                  startListening();
+                });
+              }
+            }
           }
         }
       }
@@ -246,7 +421,7 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
 
   const startListening = () => {
     initAudio();
-    const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert('Il riconoscimento vocale non è supportato in questo browser. Prova con Chrome o Safari.');
       return;
@@ -359,6 +534,17 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
     }
   };
 
+  const extractTextFromPDF = async (arrayBuffer: ArrayBuffer) => {
+    const pdf = await getDocument({ data: arrayBuffer }).promise;
+    let text = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map((item: any) => item.str).join(' ') + '\n';
+    }
+    return text;
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -368,8 +554,11 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
       const reader = new FileReader();
       reader.onloadend = async () => {
         const base64 = (reader.result as string).split(',')[1];
+        let extractedText = '';
         
         if (file.name.endsWith('.pdf')) {
+          const arrayBuffer = await file.arrayBuffer();
+          extractedText = await extractTextFromPDF(arrayBuffer);
           await processInput(`Analizza questo documento PDF: ${file.name}`, 'file', file.name, {
             data: base64,
             mimeType: 'application/pdf',
@@ -378,8 +567,8 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
         } else if (file.name.endsWith('.docx')) {
           const arrayBuffer = await file.arrayBuffer();
           const result = await mammoth.extractRawText({ arrayBuffer });
-          const fileText = result.value;
-          await processInput(`Analizza questo documento Word (${file.name}):\n\n${fileText}`, 'file', file.name, {
+          extractedText = result.value;
+          await processInput(`Analizza questo documento Word (${file.name}):\n\n${extractedText}`, 'file', file.name, {
             data: base64,
             mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             name: file.name
@@ -388,22 +577,33 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
           const arrayBuffer = await file.arrayBuffer();
           const workbook = XLSX.read(arrayBuffer, { type: 'array' });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const fileText = XLSX.utils.sheet_to_csv(firstSheet);
-          await processInput(`Analizza questo foglio Excel (${file.name}):\n\n${fileText}`, 'file', file.name, {
+          extractedText = XLSX.utils.sheet_to_csv(firstSheet);
+          await processInput(`Analizza questo foglio Excel (${file.name}):\n\n${extractedText}`, 'file', file.name, {
             data: base64,
             mimeType: file.name.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/vnd.ms-excel',
             name: file.name
           }, false);
         } else if (file.name.endsWith('.txt')) {
-          const fileText = await file.text();
-          await processInput(`Analizza questo file di testo (${file.name}):\n\n${fileText}`, 'file', file.name, {
+          extractedText = await file.text();
+          await processInput(`Analizza questo file di testo (${file.name}):\n\n${extractedText}`, 'file', file.name, {
             data: base64,
             mimeType: 'text/plain',
             name: file.name
           }, false);
         } else {
           alert('Formato file non supportato. Usa PDF, DOCX, XLSX o TXT.');
+          setIsLoading(false);
+          return;
         }
+        
+        if (extractedText) {
+          await db.documents.add({
+            fileName: file.name,
+            textContent: extractedText,
+            createdAt: new Date()
+          });
+        }
+        
         setIsLoading(false);
       };
       reader.readAsDataURL(file);
