@@ -21,6 +21,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const latestTranscriptRef = useRef('');
 
   useEffect(() => {
     fetchMessages();
@@ -248,9 +249,7 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
       return;
     }
 
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
+    stopListening();
 
     const recognition = new SpeechRecognition();
     recognitionRef.current = recognition;
@@ -259,35 +258,63 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
     recognition.lang = 'it-IT';
 
     initialQueryRef.current = query;
+    latestTranscriptRef.current = query;
 
-    recognition.onstart = () => setIsRecording(true);
+    recognition.onstart = () => {
+      if (recognitionRef.current === recognition) {
+        setIsRecording(true);
+      }
+    };
 
     recognition.onresult = (event: any) => {
+      if (recognitionRef.current !== recognition) return;
+
       const transcript = Array.from(event.results)
-        .map((result: any) => result[0].transcript)
-        .join('');
+        .map((result: any) => result[0].transcript.trim())
+        .filter(Boolean)
+        .join(' ');
       
-      const currentText = initialQueryRef.current + (initialQueryRef.current ? ' ' : '') + transcript;
+      const currentText = initialQueryRef.current 
+        ? initialQueryRef.current + ' ' + transcript
+        : transcript;
+        
       setQuery(currentText);
+      latestTranscriptRef.current = currentText;
 
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       
       silenceTimerRef.current = setTimeout(() => {
-        stopListening();
-        if (currentText.trim()) {
-          processInput(currentText, 'text');
+        if (recognitionRef.current === recognition) {
+          stopListening();
+          if (latestTranscriptRef.current.trim()) {
+            const textToSend = latestTranscriptRef.current;
+            latestTranscriptRef.current = '';
+            processInput(textToSend, 'text');
+          }
         }
       }, 2000);
     };
 
     recognition.onerror = (event: any) => {
+      if (recognitionRef.current !== recognition) return;
       console.error("Errore riconoscimento vocale:", event.error);
-      setIsRecording(false);
+      stopListening();
     };
 
     recognition.onend = () => {
-      setIsRecording(false);
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      if (recognitionRef.current === recognition) {
+        stopListening();
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = null;
+          
+          if (latestTranscriptRef.current.trim()) {
+            const textToSend = latestTranscriptRef.current;
+            latestTranscriptRef.current = '';
+            processInput(textToSend, 'text');
+          }
+        }
+      }
     };
 
     recognition.start();
@@ -295,14 +322,23 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
 
   const stopListening = () => {
     if (recognitionRef.current) {
+      recognitionRef.current.onend = null;
       recognitionRef.current.stop();
+      recognitionRef.current = null;
     }
     setIsRecording(false);
   };
 
-  const handleSend = () => {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+  const handleManualStop = () => {
     stopListening();
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  };
+
+  const handleSend = () => {
+    handleManualStop();
     if (query.trim()) {
       processInput(query, 'text');
     }
@@ -475,7 +511,7 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
         <div className="flex items-center gap-2">
           <button 
             className={`p-2 rounded-full ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'text-gray-500'}`}
-            onClick={isRecording ? stopListening : startListening}
+            onClick={isRecording ? handleManualStop : startListening}
           >
             {isRecording ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
           </button>
