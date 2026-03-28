@@ -1,5 +1,8 @@
 {
-  "name": "Smart Secretary Pro",
+  "name": "Smart Secretary Pro_1  voce",
   "description": "A private, local-first AI secretary for document and audio management.",
-  "requestFramePermissions": ["microphone", "geolocation"]
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ]
 }

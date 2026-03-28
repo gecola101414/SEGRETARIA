@@ -4,7 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import { pipeline } from '@xenova/transformers';
-import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy, Download } from 'lucide-react';
+import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy, Download, Volume2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import jsPDF from 'jspdf';
 
@@ -15,10 +15,12 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<any>(null);
+  const initialQueryRef = useRef('');
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     fetchMessages();
@@ -48,7 +50,70 @@ export default function App() {
     fetchMessages();
   };
 
+  const initAudio = () => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume();
+    }
+  };
+
+  const playAudio = async (text: string): Promise<void> => {
+    return new Promise(async (resolve) => {
+      try {
+        initAudio();
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash-preview-tts",
+          contents: [{ parts: [{ text }] }],
+          config: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: 'Kore' },
+                },
+            },
+          },
+        });
+
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (base64Audio) {
+          const binary = atob(base64Audio);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          
+          const float32Array = new Float32Array(bytes.length / 2);
+          const dataView = new DataView(bytes.buffer);
+          for (let i = 0; i < float32Array.length; i++) {
+            float32Array[i] = dataView.getInt16(i * 2, true) / 32768.0;
+          }
+
+          const audioCtx = audioCtxRef.current!;
+          const buffer = audioCtx.createBuffer(1, float32Array.length, 24000);
+          buffer.getChannelData(0).set(float32Array);
+
+          const source = audioCtx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(audioCtx.destination);
+          source.onended = () => resolve();
+          source.start();
+        } else {
+          resolve();
+        }
+      } catch (err) {
+        console.error("Errore riproduzione audio:", err);
+        resolve();
+      }
+    });
+  };
+
   const processInput = async (input: string, type: 'text' | 'audio' | 'file', metadata?: string, fileData?: { data: string, mimeType: string, name: string }, passToGemini: boolean = true) => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    stopListening();
+    
+    initAudio();
     await addMessage({ 
       sender: 'user', 
       type, 
@@ -94,7 +159,7 @@ export default function App() {
         });
       }
 
-      const response = await ai.models.generateContent({
+      const responseStream = await ai.models.generateContentStream({
         model: 'gemini-3-flash-preview',
         contents: promptContents,
         config: {
@@ -122,10 +187,32 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
         }
       });
 
-      const fullResponse = response.text || '';
-      let politeMsg = fullResponse;
-      let cleanMsg = fullResponse;
+      let fullResponse = '';
+      let politeMsg = '';
+      let cleanMsg = '';
       let digressionMsg = '';
+      let hasPlayedAudio = false;
+
+      for await (const chunk of responseStream) {
+        fullResponse += chunk.text;
+        
+        if (!hasPlayedAudio && fullResponse.includes('---')) {
+          politeMsg = fullResponse.split('---')[0].trim();
+          if (politeMsg) {
+            hasPlayedAudio = true;
+            playAudio(politeMsg).then(() => {
+              startListening();
+            });
+          }
+        }
+      }
+
+      if (!hasPlayedAudio && fullResponse.trim()) {
+        politeMsg = fullResponse.trim();
+        playAudio(politeMsg).then(() => {
+          startListening();
+        });
+      }
 
       let mainResponse = fullResponse;
       if (fullResponse.includes('===DIVAGAZIONE===')) {
@@ -153,35 +240,72 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
     }
   };
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-      
-      mediaRecorderRef.current.ondataavailable = (e) => audioChunksRef.current.push(e.data);
-      mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        // Use a simpler approach for demo purposes if pipeline fails
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const arrayBuffer = reader.result as ArrayBuffer;
-          // Dummy transcription for demo if pipeline fails
-          processInput("Nota vocale registrata", 'audio');
-        };
-        reader.readAsArrayBuffer(audioBlob);
-      };
-      
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-    } catch (err) {
-      alert('Non posso accedere al microfono.');
+  const startListening = () => {
+    initAudio();
+    const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Il riconoscimento vocale non è supportato in questo browser. Prova con Chrome o Safari.');
+      return;
     }
+
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'it-IT';
+
+    initialQueryRef.current = query;
+
+    recognition.onstart = () => setIsRecording(true);
+
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results)
+        .map((result: any) => result[0].transcript)
+        .join('');
+      
+      const currentText = initialQueryRef.current + (initialQueryRef.current ? ' ' : '') + transcript;
+      setQuery(currentText);
+
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      
+      silenceTimerRef.current = setTimeout(() => {
+        stopListening();
+        if (currentText.trim()) {
+          processInput(currentText, 'text');
+        }
+      }, 2000);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Errore riconoscimento vocale:", event.error);
+      setIsRecording(false);
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    };
+
+    recognition.start();
   };
 
-  const stopRecording = () => {
-    mediaRecorderRef.current?.stop();
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
     setIsRecording(false);
+  };
+
+  const handleSend = () => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    stopListening();
+    if (query.trim()) {
+      processInput(query, 'text');
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -275,9 +399,16 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
               {msg.sender === 'ai' && msg.content.includes('---') ? (
                 <div className="flex flex-col">
                   {/* Note interne */}
-                  <div className="text-xs text-gray-500 italic border-b border-gray-200 pb-2 mb-2">
+                  <div className="text-xs text-gray-500 italic border-b border-gray-200 pb-2 mb-2 relative pr-6">
                     <span className="font-semibold not-italic text-gray-600">Note interne: </span>
                     <span className="whitespace-pre-wrap">{msg.content.split('---')[0].trim()}</span>
+                    <button 
+                      onClick={() => playAudio(msg.content.split('---')[0].trim())}
+                      className="absolute top-0 right-0 p-1 text-gray-400 hover:text-gray-600"
+                      title="Riproduci nota"
+                    >
+                      <Volume2 className="w-4 h-4" />
+                    </button>
                   </div>
                   
                   {/* Contenuto WhatsApp */}
@@ -343,8 +474,8 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
       <footer className="p-2 bg-[#F0F0F0] border-t">
         <div className="flex items-center gap-2">
           <button 
-            className={`p-2 rounded-full ${isRecording ? 'bg-red-500 text-white' : 'text-gray-500'}`}
-            onClick={isRecording ? stopRecording : startRecording}
+            className={`p-2 rounded-full ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'text-gray-500'}`}
+            onClick={isRecording ? stopListening : startListening}
           >
             {isRecording ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
           </button>
@@ -358,10 +489,10 @@ IMPORTANTE: NON usare etichette come "AI:" o formattazione speciale per identifi
             placeholder="Scrivi un messaggio..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && processInput(query, 'text')}
+            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
           />
           
-          <button className="p-2 bg-[#075E54] text-white rounded-full" onClick={() => processInput(query, 'text')} disabled={isLoading}>
+          <button className="p-2 bg-[#075E54] text-white rounded-full" onClick={handleSend} disabled={isLoading}>
             {isLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Send className="w-6 h-6" />}
           </button>
         </div>
