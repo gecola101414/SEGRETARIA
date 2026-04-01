@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Folder, FileText, Upload, Plus, Search, ChevronRight, Info, Trash2, MoreVertical, Download, Edit2 } from 'lucide-react';
+import { Folder, FolderOpen, FileText, Upload, Plus, Search, ChevronRight, Info, Trash2, MoreVertical, Download, Edit2 } from 'lucide-react';
 import { DocumentArchive, Fascicolo, db } from '../db/database';
 
 interface WorkDriveArchiveProps {
@@ -54,13 +54,33 @@ export default function WorkDriveArchive({
     setExpandedFascicoli(next);
   };
 
-  const renderFascicolo = (f: Fascicolo, level: number = 0) => {
+  const renderFascicolo = (f: Fascicolo, level: number = 0, isLast: boolean = true) => {
     const children = subFascicoli.filter(sub => sub.parentId === f.id).sort((a, b) => a.name.localeCompare(b.name));
     const isExpanded = expandedFascicoli.has(f.id!);
+    const isSub = level > 0;
+    
+    // Limit to 3 levels
+    if (level > 2) return null;
+
+    const getFolderIcon = (lvl: number) => {
+      if (lvl === 0) return <Folder className="w-4 h-4 text-blue-500" />;
+      if (lvl === 1) return <FolderOpen className="w-4 h-4 text-amber-500" />;
+      return <FileText className="w-4 h-4 text-green-500" />;
+    };
+
     return (
-      <div key={f.id}>
+      <div key={f.id} className="relative">
+        {isSub && (
+          <div 
+            className={`absolute top-0 border-l-2 border-dashed border-gray-300 ${isLast ? 'h-6' : 'bottom-0'}`} 
+            style={{ left: `${(level - 1) * 16 + 24}px` }} 
+          />
+        )}
+        {isSub && (
+          <div className="absolute top-6 w-3 border-t-2 border-dashed border-gray-300" style={{ left: `${(level - 1) * 16 + 24}px` }} />
+        )}
         <div 
-          className={`w-full flex items-center justify-between rounded group ${activeFascicoloId === f.id ? 'bg-blue-100 text-blue-800 font-bold' : 'hover:bg-gray-200'} ${highlightedFascicoloId === f.id ? 'bg-blue-300' : ''}`}
+          className={`w-full flex items-center justify-between rounded group ${activeFascicoloId === f.id ? 'bg-blue-50 text-blue-700 font-semibold' : 'hover:bg-gray-100'} ${highlightedFascicoloId === f.id ? 'bg-blue-200' : ''}`}
           style={{ paddingLeft: `${level * 16 + 4}px` }}
           onDragOver={(e) => { e.preventDefault(); setHighlightedFascicoloId(f.id!); }}
           onDragLeave={() => setHighlightedFascicoloId(null)}
@@ -71,28 +91,28 @@ export default function WorkDriveArchive({
           }}
         >
           <div className="flex items-center flex-grow">
-            <button onClick={() => toggleExpand(f.id!)} className="p-1 hover:bg-gray-300 rounded">
-              <ChevronRight className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''} ${children.length === 0 ? 'opacity-0' : 'opacity-100'}`} />
+            <button onClick={() => toggleExpand(f.id!)} className="p-1 hover:bg-gray-200 rounded">
+              <ChevronRight className={`w-4 h-4 transition-transform text-gray-400 ${isExpanded ? 'rotate-90' : ''} ${children.length === 0 ? 'opacity-0' : 'opacity-100'}`} />
             </button>
             <button 
               onClick={() => { setActiveView('folder'); setActiveFascicoloId(f.id!); }}
               className="flex-grow text-left px-1 py-2 flex items-center gap-2"
             >
-              <Folder className="w-4 h-4 text-blue-400" /> {f.name}
+              {getFolderIcon(level)} {f.name}
             </button>
           </div>
           <div className="hidden group-hover:flex gap-1 pr-2">
-            <button onClick={() => handleCreateSubFascicolo(f.id!)} className="p-1 hover:bg-gray-300 rounded-full border border-gray-400"><Plus className="w-3 h-3" /></button>
+            <button onClick={() => handleCreateSubFascicolo(f.id!)} className="p-1 hover:bg-gray-200 rounded-full text-gray-500"><Plus className="w-3 h-3" /></button>
             <button onClick={() => {
               const newName = prompt("Nuovo nome:", f.name);
               if (newName) handleRenameFascicolo(f.id!, newName);
-            }} className="p-1 hover:bg-gray-300 rounded"><Edit2 className="w-3 h-3" /></button>
+            }} className="p-1 hover:bg-gray-200 rounded text-gray-500"><Edit2 className="w-3 h-3" /></button>
             <button onClick={() => {
               if (confirm(`Sei sicuro di voler eliminare il fascicolo ${f.name}?`)) handleDeleteFascicolo(f.id!);
-            }} className="p-1 hover:bg-gray-300 rounded text-red-500"><Trash2 className="w-3 h-3" /></button>
+            }} className="p-1 hover:bg-gray-200 rounded text-red-500"><Trash2 className="w-3 h-3" /></button>
           </div>
         </div>
-        {isExpanded && children.map(child => renderFascicolo(child, level + 1))}
+        {isExpanded && children.map((child, index) => renderFascicolo(child, level + 1, index === children.length - 1))}
       </div>
     );
   };

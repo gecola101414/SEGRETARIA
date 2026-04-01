@@ -29,7 +29,16 @@ export interface Appointment {
   date: string; // YYYY-MM-DD
   time: string; // HH:MM
   description: string;
+  location?: string; // Location for weather
   introduction?: string; // Introduzione della segretaria
+  createdAt: Date;
+}
+
+export interface Weather {
+  id?: number;
+  date: string; // YYYY-MM-DD
+  location: string;
+  forecast: string;
   createdAt: Date;
 }
 
@@ -51,14 +60,16 @@ class SmartSecretaryDB extends Dexie {
   appointments!: Table<Appointment>;
   documents!: Table<DocumentArchive>;
   fascicoli!: Table<Fascicolo>;
+  weather!: Table<Weather>;
 
   constructor() {
     super('SmartSecretaryDB');
-    this.version(9).stores({
+    this.version(10).stores({
       messages: '++id, sender, type, createdAt',
       appointments: '++id, date, time',
       documents: '++id, fileName, category, fascicoloId, deleted',
-      fascicoli: '++id, name, deleted'
+      fascicoli: '++id, name, deleted',
+      weather: '++id, date, location'
     });
   }
 }

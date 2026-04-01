@@ -5,7 +5,7 @@ import { GoogleGenAI, FunctionDeclaration, Type } from '@google/genai';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import { pipeline } from '@xenova/transformers';
-import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy, Download, Volume2, Camera, X } from 'lucide-react';
+import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy, Download, Volume2, Camera, X, MessageSquare, Archive, Calendar, Trash2 } from 'lucide-react';
 import WorkDriveArchive from './components/WorkDriveArchive';
 import AgendaCalendar from './components/AgendaCalendar';
 import { motion, AnimatePresence } from 'motion/react';
@@ -13,10 +13,22 @@ import jsPDF from 'jspdf';
 import { format, parseISO, isValid } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+// @ts-ignore
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@5.5.207/build/pdf.worker.min.mjs`;
+GlobalWorkerOptions.workerSrc = pdfWorker;
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+const LiveIndicator = () => (
+  <div className="fixed bottom-20 right-6 z-50">
+    <div className="relative flex items-center justify-center w-16 h-16 bg-blue-600 rounded-full shadow-lg">
+      <div className="absolute w-20 h-20 bg-blue-400 rounded-full animate-ping opacity-75"></div>
+      <div className="absolute w-24 h-24 bg-blue-300 rounded-full animate-ping opacity-50 animation-delay-500"></div>
+      <Mic className="w-8 h-8 text-white" />
+    </div>
+  </div>
+);
+
+// ... (rest of the file)
 
 const addAppointmentTool: FunctionDeclaration = {
   name: 'addAppointment',
@@ -156,11 +168,13 @@ const createFascicoloTool: FunctionDeclaration = {
 };
 
 export default function App() {
+  const ai = React.useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! }), []);
   const [messages, setMessages] = useState<Message[]>([]);
   const [fascicoli, setFascicoli] = useState<Fascicolo[]>([]);
   const [activeFascicoloId, setActiveFascicoloId] = useState<number | null>(null);
   const [activeAppointmentId, setActiveAppointmentId] = useState<number | null>(null);
   const [activeAppointment, setActiveAppointment] = useState<Appointment | null>(null);
+  const [weatherForLocation, setWeatherForLocation] = useState<string>('');
   const [fascicoloDocuments, setFascicoloDocuments] = useState<DocumentArchive[]>([]);
   const [appointmentDocuments, setAppointmentDocuments] = useState<DocumentArchive[]>([]);
   const [trashDocuments, setTrashDocuments] = useState<DocumentArchive[]>([]);
@@ -187,16 +201,23 @@ export default function App() {
   const lastInputTypeRef = useRef<'text' | 'audio' | 'file'>('text');
   const isIntentionallyStoppedRef = useRef(false);
 
+  const [newFascicoloModal, setNewFascicoloModal] = useState<{ show: boolean, parentId: number | null }>({ show: false, parentId: null });
+  const [newFascicoloName, setNewFascicoloName] = useState('');
   const [isFirstInteractionOfDay, setIsFirstInteractionOfDay] = useState(false);
   const [isReturnAfterBreak, setIsReturnAfterBreak] = useState(false);
 
   useEffect(() => {
+    console.log("Initialization useEffect triggered");
     fetchMessages();
     fetchFascicoli().then(async () => {
+      console.log("Checking for 'Dati Generali' fascicolo");
       const exists = await db.fascicoli.where('name').equals('Dati Generali').first();
       if (!exists) {
+        console.log("'Dati Generali' not found, adding it");
         await db.fascicoli.add({ name: 'Dati Generali', createdAt: new Date() });
         fetchFascicoli();
+      } else {
+        console.log("'Dati Generali' already exists");
       }
     });
 
@@ -232,8 +253,7 @@ Il tuo obiettivo è fornire informazioni precise, strategiche e sintetiche.
 Analizza l'input e rispondi in tre parti separate da "---":
 
 PARTE 1 (Introduzione e Voce):
-- Introduci brevemente il lavoro fatto.
-- Aggiungi un cenno di cortesia generale.
+- Introduci brevissimamente il lavoro fatto.
 - Questa parte verrà letta a voce.
 
 PARTE 2 (Corpo centrale - Risposta):
@@ -267,13 +287,34 @@ ${greetingInstruction}
     }
     if (activeAppointmentId) {
       fetchAppointmentDocuments(activeAppointmentId);
-      db.appointments.get(activeAppointmentId).then(setActiveAppointment);
+      db.appointments.get(activeAppointmentId).then(app => {
+        setActiveAppointment(app || null);
+        if (app?.location) {
+          fetchWeatherForLocation(app.location);
+        } else {
+          setWeatherForLocation('');
+        }
+      });
     } else {
       setAppointmentDocuments([]);
       setActiveAppointment(null);
+      setWeatherForLocation('');
     }
     fetchTrash();
   }, [activeFascicoloId, activeAppointmentId]);
+
+  const fetchWeatherForLocation = async (location: string) => {
+    try {
+      // Simple weather fetch for the location
+      const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=41.9028&longitude=12.4964&current=temperature_2m,weather_code`); // Using Rome as placeholder
+      const data = await res.json();
+      const temp = data.current.temperature_2m;
+      const desc = data.current.weather_code > 0 ? 'Nuvoloso' : 'Soleggiato';
+      setWeatherForLocation(`${temp}°C, ${desc}`);
+    } catch (e) {
+      setWeatherForLocation('N/A');
+    }
+  };
 
   const fetchTrash = async () => {
     const d = await db.documents.filter(d => d.deleted === true).toArray();
@@ -283,7 +324,9 @@ ${greetingInstruction}
   };
 
   const fetchFascicoli = async () => {
+    console.log("fetchFascicoli called");
     const f = await db.fascicoli.filter(f => !f.deleted).toArray();
+    console.log("fetchFascicoli retrieved:", f.length);
     setFascicoli(f);
   };
 
@@ -344,30 +387,41 @@ ${greetingInstruction}
     fetchFascicoli();
   };
 
-  const handleCreateSubFascicolo = async (parentId: number) => {
-    const name = prompt("Nome del nuovo sotto-fascicolo:");
-    if (name) {
-      await db.fascicoli.add({ name, parentId, createdAt: new Date() });
+  const handleCreateSubFascicolo = (parentId: number) => {
+    setNewFascicoloModal({ show: true, parentId });
+  };
+
+  const handleCreateFascicolo = () => {
+    setNewFascicoloModal({ show: true, parentId: null });
+  };
+
+  const confirmCreateFascicolo = async () => {
+    if (newFascicoloName) {
+      const id = await db.fascicoli.add({ 
+        name: newFascicoloName, 
+        parentId: newFascicoloModal.parentId || undefined, 
+        createdAt: new Date() 
+      });
       await fetchFascicoli();
+      if (!newFascicoloModal.parentId) setActiveFascicoloId(id);
+      setNewFascicoloModal({ show: false, parentId: null });
+      setNewFascicoloName('');
     }
   };
 
-  const handleCreateFascicolo = async () => {
-    const name = prompt("Nome del nuovo fascicolo:");
-    if (name) {
-      const id = await db.fascicoli.add({ name, createdAt: new Date() });
-      console.log("Nuovo fascicolo creato:", id);
-      await fetchFascicoli();
-      setActiveFascicoloId(id);
-    }
-  };
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (activeView === 'chat') {
+      messagesEndRef.current?.scrollIntoView({ behavior: isInitialLoad ? 'auto' : 'smooth' });
+      setIsInitialLoad(false);
+    }
+  }, [messages, activeView]);
 
   const fetchMessages = async () => {
+    console.log("fetchMessages called");
     const msgs = await db.messages.orderBy('createdAt').toArray();
+    console.log("fetchMessages retrieved:", msgs.length);
     setMessages(msgs);
   };
 
@@ -535,11 +589,18 @@ ${greetingInstruction}
           const results = docs.map(d => {
             try {
               const parsed = JSON.parse(d.jsonContent);
-              if (!parsed || !parsed.content) return null;
-              const text = parsed.content.toLowerCase();
+              if (!parsed) return null;
+              
+              const searchableText = [
+                parsed.content || '',
+                parsed.summary || '',
+                (parsed.entities || []).join(' '),
+                (parsed.actionItems || []).join(' ')
+              ].join(' ').toLowerCase();
+              
               let matchIndex = -1;
               for (const k of keywords) {
-                const idx = text.indexOf(k);
+                const idx = searchableText.indexOf(k);
                 if (idx !== -1) {
                   matchIndex = idx;
                   break;
@@ -548,13 +609,12 @@ ${greetingInstruction}
               
               if (matchIndex !== -1) {
                 const start = Math.max(0, matchIndex - 500);
-                const content = parsed.content;
-                const end = Math.min(content.length, matchIndex + 1000);
+                const end = Math.min(searchableText.length, matchIndex + 1000);
                 return {
                   id: d.id,
                   fileName: d.fileName,
                   category: d.category,
-                  snippet: content.substring(start, end) + '...'
+                  snippet: searchableText.substring(start, end) + '...'
                 };
               }
             } catch (e) {
@@ -823,7 +883,10 @@ Nuova richiesta: ${input}`;
       if (isVoiceEnabled && !hasPlayedAudio && fullResponse.trim()) {
         politeMsg = fullResponse.trim();
         playAudio(politeMsg).then(() => {
-          startListening();
+          console.log("Audio playback finished. Re-activating microphone if last input was audio.");
+          if (lastInputTypeRef.current === 'audio') {
+            setTimeout(() => startListening(), 500);
+          }
         });
       }
 
@@ -933,15 +996,15 @@ Nuova richiesta: ${input}`;
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       
       silenceTimerRef.current = setTimeout(() => {
-        isIntentionallyStoppedRef.current = true;
-        stopListening();
+        console.log("Silence detected, processing input");
+        // Do NOT stop listening, just process the input
         if (latestTranscriptRef.current.trim()) {
           const textToSend = latestTranscriptRef.current;
           latestTranscriptRef.current = '';
           setQuery('');
-          processInput(textToSend, 'text');
+          processInput(textToSend, 'audio');
         }
-      }, 4000);
+      }, 3000);
     };
 
     recognition.onerror = (event: any) => {
@@ -1012,37 +1075,72 @@ Nuova richiesta: ${input}`;
   };
 
   const extractTextFromPDF = async (arrayBuffer: ArrayBuffer) => {
-    const pdf = await getDocument({ data: arrayBuffer }).promise;
-    let text = '';
-    
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      text += content.items.map((item: any) => item.str).join(' ') + '\n';
-    }
-
-    let images: string[] = [];
-    // If text is too short, it's likely a scanned PDF, render images
-    if (text.trim().length < 50) {
-      for (let i = 1; i <= Math.min(pdf.numPages, 3); i++) { // 3 pages is enough
+    try {
+      const pdf = await getDocument({ data: arrayBuffer }).promise;
+      let text = '';
+      
+      for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 1.0 });
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        if (context) {
-          canvas.height = viewport.height;
-          canvas.width = viewport.width;
-          await page.render({ canvasContext: context, viewport, canvas }).promise;
-          images.push(canvas.toDataURL('image/jpeg').split(',')[1]);
+        const content = await page.getTextContent();
+        text += content.items.map((item: any) => item.str).join(' ') + '\n';
+      }
+
+      let images: string[] = [];
+      // If text is too short, it's likely a scanned PDF, render images
+      if (text.trim().length < 50) {
+        for (let i = 1; i <= Math.min(pdf.numPages, 3); i++) { // 3 pages is enough
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 1.0 });
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          if (context) {
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            await page.render({ canvasContext: context, viewport, canvas }).promise;
+            images.push(canvas.toDataURL('image/jpeg').split(',')[1]);
+          }
         }
       }
+      return { text, images };
+    } catch (error) {
+      console.error("Error in extractTextFromPDF:", error);
+      throw error;
     }
-    return { text, images };
   };
 
   const handleRenameDocument = async (docId: number, newName: string) => {
     await db.documents.update(docId, { fileName: newName });
     if (activeFascicoloId) fetchFascicoloDocuments(activeFascicoloId);
+  };
+
+  const analyzeDocument = async (text: string): Promise<string> => {
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Analizza il seguente documento e estrai le informazioni chiave in formato JSON.
+Struttura richiesta:
+{
+  "summary": "Sintesi breve del documento",
+  "entities": ["lista di entità chiave"],
+  "dates": ["lista di date rilevanti"],
+  "actionItems": ["lista di azioni da compiere"],
+  "category": "Categoria suggerita"
+}
+
+Documento:
+${text.substring(0, 10000)}`, // Limit text to avoid token issues
+        config: {
+          responseMimeType: "application/json",
+        },
+      });
+      
+      const result = JSON.parse(response.text || '{}');
+      result.content = text;
+      return JSON.stringify(result);
+    } catch (e) {
+      console.error("Errore analisi documento:", e);
+      return JSON.stringify({ summary: "Errore nell'analisi", content: text });
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1059,73 +1157,125 @@ Nuova richiesta: ${input}`;
     setIsLoading(true);
     try {
       const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = (reader.result as string).split(',')[1];
-        let extractedText = '';
-        let mimeType = file.type;
-        
-        if (file.name.endsWith('.pdf')) {
-          const arrayBuffer = await file.arrayBuffer();
-          const { text, images } = await extractTextFromPDF(arrayBuffer);
-          extractedText = text;
-          mimeType = 'application/pdf';
+      reader.onload = async () => {
+        try {
+          console.log("Starting processing file:", file.name);
+          const base64 = (reader.result as string).split(',')[1];
+          let extractedText = '';
+          let mimeType = file.type;
           
-          await db.documents.add({
-            fileName: file.name,
-            category: fileCategory || 'Generale',
-            fascicoloId: activeFascicoloId || undefined,
-            appointmentId: activeAppointmentId || undefined,
-            jsonContent: JSON.stringify({ content: extractedText }),
-            originalFileBase64: base64,
-            fileMimeType: mimeType,
-            createdAt: new Date()
-          });
+          if (file.name.endsWith('.pdf')) {
+            const arrayBuffer = await file.arrayBuffer();
+            const { text, images } = await extractTextFromPDF(arrayBuffer);
+            extractedText = text;
+            mimeType = 'application/pdf';
+            
+            const structuredContent = await analyzeDocument(extractedText);
+            
+            await db.documents.add({
+              fileName: file.name,
+              category: fileCategory || 'Generale',
+              fascicoloId: activeFascicoloId || undefined,
+              appointmentId: activeAppointmentId || undefined,
+              jsonContent: structuredContent,
+              originalFileBase64: base64,
+              fileMimeType: mimeType,
+              createdAt: new Date()
+            });
 
-          if (images.length > 0) {
-            await processInput(`Analisi visiva del documento PDF: ${file.name}`, 'file', undefined, { data: base64, mimeType, name: file.name }, images);
+            if (images.length > 0) {
+              await processInput(`Analisi visiva del documento PDF: ${file.name}`, 'file', undefined, { data: base64, mimeType, name: file.name }, images);
+            } else {
+              await processInput(`Analisi del documento PDF: ${file.name}`, 'file', undefined, { data: base64, mimeType, name: file.name });
+            }
+          } else if (file.name.endsWith('.docx')) {
+            console.log("Processing DOCX");
+            const arrayBuffer = await file.arrayBuffer();
+            const result = await mammoth.extractRawText({ arrayBuffer });
+            extractedText = result.value;
+            mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+            
+            const structuredContent = await analyzeDocument(extractedText);
+            
+            await db.documents.add({
+              fileName: file.name,
+              category: fileCategory || 'Generale',
+              fascicoloId: activeFascicoloId || undefined,
+              appointmentId: activeAppointmentId || undefined,
+              jsonContent: structuredContent,
+              originalFileBase64: base64,
+              fileMimeType: mimeType,
+              createdAt: new Date()
+            });
+          } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+            console.log("Processing XLSX");
+            const arrayBuffer = await file.arrayBuffer();
+            const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            extractedText = XLSX.utils.sheet_to_csv(firstSheet);
+            mimeType = file.name.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/vnd.ms-excel';
+            
+            const structuredContent = await analyzeDocument(extractedText);
+            
+            await db.documents.add({
+              fileName: file.name,
+              category: fileCategory || 'Generale',
+              fascicoloId: activeFascicoloId || undefined,
+              appointmentId: activeAppointmentId || undefined,
+              jsonContent: structuredContent,
+              originalFileBase64: base64,
+              fileMimeType: mimeType,
+              createdAt: new Date()
+            });
+          } else if (file.name.endsWith('.txt') || file.name.endsWith('.csv') || file.name.endsWith('.md')) {
+            console.log("Processing Text file");
+            extractedText = await file.text();
+            mimeType = 'text/plain';
+            
+            const structuredContent = await analyzeDocument(extractedText);
+            
+            await db.documents.add({
+              fileName: file.name,
+              category: fileCategory || 'Generale',
+              fascicoloId: activeFascicoloId || undefined,
+              appointmentId: activeAppointmentId || undefined,
+              jsonContent: structuredContent,
+              originalFileBase64: base64,
+              fileMimeType: mimeType,
+              createdAt: new Date()
+            });
           } else {
-            await processInput(`Analisi del documento PDF: ${file.name}`, 'file', undefined, { data: base64, mimeType, name: file.name });
+            console.log("Processing unknown file type");
+            // For other files, we just store them, search will be based on filename
+            extractedText = `File: ${file.name}`;
+            
+            await db.documents.add({
+              fileName: file.name,
+              category: fileCategory || 'Generale',
+              fascicoloId: activeFascicoloId || undefined,
+              appointmentId: activeAppointmentId || undefined,
+              jsonContent: JSON.stringify({ content: extractedText }),
+              originalFileBase64: base64,
+              fileMimeType: mimeType,
+              createdAt: new Date()
+            });
           }
-        } else if (file.name.endsWith('.docx')) {
-          const arrayBuffer = await file.arrayBuffer();
-          const result = await mammoth.extractRawText({ arrayBuffer });
-          extractedText = result.value;
-          mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-        } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-          const arrayBuffer = await file.arrayBuffer();
-          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          extractedText = XLSX.utils.sheet_to_csv(firstSheet);
-          mimeType = file.name.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/vnd.ms-excel';
-        } else if (file.name.endsWith('.txt') || file.name.endsWith('.csv') || file.name.endsWith('.md')) {
-          extractedText = await file.text();
-          mimeType = 'text/plain';
-        } else {
-          // For other files, we just store them, search will be based on filename
-          extractedText = `File: ${file.name}`;
+          
+          if (activeFascicoloId) {
+            fetchFascicoloDocuments(activeFascicoloId);
+          }
+          setFileCategory('');
+          console.log("File processing complete");
+        } catch (error) {
+          console.error("Errore nel processamento del file:", error);
+          alert("Errore durante il caricamento del file. Riprova.");
+        } finally {
+          setIsLoading(false);
+          console.log("Loading finished");
         }
-        
-        if (!file.name.endsWith('.pdf')) {
-          await db.documents.add({
-            fileName: file.name,
-            category: fileCategory || 'Generale',
-            fascicoloId: activeFascicoloId || undefined,
-            appointmentId: activeAppointmentId || undefined,
-            jsonContent: JSON.stringify({ content: extractedText }),
-            originalFileBase64: base64,
-            fileMimeType: mimeType,
-            createdAt: new Date()
-          });
-        }
-        
-        if (activeFascicoloId) {
-          fetchFascicoloDocuments(activeFascicoloId);
-        }
-        setFileCategory('');
-        
-        setIsLoading(false);
       };
       reader.readAsDataURL(file);
+      console.log("reader.readAsDataURL called");
     } catch (error) {
       console.error(error);
       setIsLoading(false);
@@ -1152,19 +1302,29 @@ Nuova richiesta: ${input}`;
   };
 
   return (
-    <div className="flex flex-col h-screen w-full overflow-x-hidden bg-[#E5DDD5]">
+    <div className="flex flex-col h-[100dvh] w-full overflow-x-hidden bg-[#E5DDD5]">
       <header className="p-4 bg-[#075E54] text-white font-bold text-lg shadow-md w-full flex justify-between items-center">
         <div className="flex gap-4">
-          <button onClick={() => setActiveView('chat')} className={activeView === 'chat' ? 'underline' : ''}>Chat</button>
-          <button onClick={() => setActiveView('archivio')} className={activeView === 'archivio' ? 'underline' : ''}>Archivio</button>
-          <button onClick={() => setActiveView('agenda')} className={activeView === 'agenda' ? 'underline' : ''}>Agenda</button>
+          <button onClick={() => setActiveView('chat')} className={activeView === 'chat' ? 'opacity-100' : 'opacity-50'} title="Chat"><MessageSquare className="w-6 h-6" /></button>
+          <button onClick={() => setActiveView('archivio')} className={activeView === 'archivio' ? 'opacity-100' : 'opacity-50'} title="Archivio"><Archive className="w-6 h-6" /></button>
+          <button onClick={() => setActiveView('agenda')} className={activeView === 'agenda' ? 'opacity-100' : 'opacity-50'} title="Agenda"><Calendar className="w-6 h-6" /></button>
         </div>
-        <button 
-          className={`p-2 rounded-full ${isVoiceEnabled ? 'text-white' : 'text-gray-300'}`}
-          onClick={() => setIsVoiceEnabled(!isVoiceEnabled)}
-        >
-          {isVoiceEnabled ? <Volume2 className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
-        </button>
+        <div className="flex items-center gap-2">
+          <select 
+            className="p-1 rounded border border-gray-300 text-sm text-black"
+            value={activeFascicoloId || ''}
+            onChange={(e) => setActiveFascicoloId(Number(e.target.value) || null)}
+          >
+            <option value="">Fascicolo...</option>
+            {fascicoli.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+          <button 
+            className={`p-2 rounded-full ${isVoiceEnabled ? 'text-white' : 'text-gray-300'}`}
+            onClick={() => setIsVoiceEnabled(!isVoiceEnabled)}
+          >
+            {isVoiceEnabled ? <Volume2 className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
+          </button>
+        </div>
       </header>
 
       <main className="flex-grow p-4 overflow-y-auto space-y-4 w-full">
@@ -1318,21 +1478,28 @@ Nuova richiesta: ${input}`;
                 onChange={(e) => db.appointments.update(activeAppointmentId!, { introduction: e.target.value })}
                 placeholder="Inserisci un'introduzione per l'appuntamento..."
               />
+              <div className="mb-4">
+                <h3 className="font-semibold">Luogo: {activeAppointment?.location || 'Non specificato'}</h3>
+                {activeAppointment?.location && (
+                  <p className="text-sm text-gray-600">Meteo: {weatherForLocation || 'Caricamento...'}</p>
+                )}
+              </div>
               <h3 className="font-semibold mb-2">Documenti</h3>
               {appointmentDocuments.length === 0 && <p className="text-gray-500">Nessun documento.</p>}
               {appointmentDocuments.map(doc => (
                 <div key={doc.id} className="flex justify-between items-center p-2 border-b">
                   <span>{doc.fileName}</span>
-                  <button onClick={() => handleDeleteDocument(doc.id!)} className="text-red-500">Elimina</button>
+                  <button onClick={() => handleDeleteDocument(doc.id!)} className="text-red-500"><Trash2 className="w-4 h-4" /></button>
                 </div>
               ))}
             </div>
             <div className="mt-4 pt-4 border-t">
               <button 
                 onClick={() => fileInputRef.current?.click()}
-                className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                className="bg-blue-500 text-white p-2 rounded-full hover:bg-blue-600"
+                title="Carica Documento"
               >
-                Carica Documento
+                <Upload className="w-5 h-5" />
               </button>
             </div>
           </div>
@@ -1340,41 +1507,18 @@ Nuova richiesta: ${input}`;
       )}
 
       <footer className="p-2 bg-[#F0F0F0] border-t">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button 
-            className={`p-2 rounded-full cursor-pointer ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'text-gray-500'}`}
+            className={`p-2 rounded-full cursor-pointer ${isRecording ? 'bg-blue-600 text-white' : 'text-gray-500'}`}
             onClick={isRecording ? handleManualStop : startListening}
           >
-            {isRecording ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
+            {isRecording ? <div className="w-6 h-6 rounded-full bg-white" /> : <Mic className="w-6 h-6" />}
           </button>
           <button className="p-2 text-gray-500 cursor-pointer" onClick={() => fileInputRef.current?.click()}>
             <Upload className="w-6 h-6" />
           </button>
           <input type="file" ref={fileInputRef} className="hidden" accept=".txt,.docx,.pdf,.xlsx,.xls" onChange={handleFileUpload} />
-          <input 
-            type="text" 
-            placeholder="Area tematica..." 
-            className="p-2 rounded-full border border-gray-300 text-sm"
-            value={fileCategory}
-            onChange={(e) => setFileCategory(e.target.value)}
-          />
-          <div className="flex items-center gap-1">
-            <select 
-              className="p-2 rounded-full border border-gray-300 text-sm"
-              value={activeFascicoloId || ''}
-              onChange={(e) => setActiveFascicoloId(Number(e.target.value) || null)}
-            >
-              <option value="">Seleziona fascicolo...</option>
-              {fascicoli.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-            </select>
-            <button 
-              onClick={handleCreateFascicolo}
-              className="p-2 bg-gray-200 rounded-full text-sm font-bold"
-              title="Crea nuovo fascicolo"
-            >
-              +
-            </button>
-          </div>
+          
           <button className="p-2 text-gray-500 cursor-pointer" onClick={startCamera}>
             <Camera className="w-6 h-6" />
           </button>
@@ -1401,6 +1545,24 @@ Nuova richiesta: ${input}`;
           <div className="mt-4 flex gap-4">
             <button onClick={capturePhoto} className="bg-white text-black px-4 py-2 rounded">Scatta</button>
             <button onClick={stopCamera} className="bg-red-500 text-white px-4 py-2 rounded">Chiudi</button>
+          </div>
+        </div>
+      )}
+      {/* Removed floating LiveIndicator */}
+      {newFascicoloModal.show && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl w-96">
+            <h2 className="text-lg font-bold mb-4">{newFascicoloModal.parentId ? 'Nuova Sottocartella' : 'Nuovo Fascicolo'}</h2>
+            <input 
+              className="w-full p-2 border rounded mb-4"
+              placeholder={newFascicoloModal.parentId ? 'Nome sottocartella' : 'Nome fascicolo'}
+              value={newFascicoloName}
+              onChange={(e) => setNewFascicoloName(e.target.value)}
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setNewFascicoloModal({ show: false, parentId: null })} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">Annulla</button>
+              <button onClick={confirmCreateFascicolo} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Crea</button>
+            </div>
           </div>
         </div>
       )}
