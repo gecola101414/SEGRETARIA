@@ -345,6 +345,12 @@ ${greetingInstruction}
     await handleFileUpload(event);
   };
 
+  const handleMoveFascicolo = async (fascicoloId: number, targetFascicoloId: number) => {
+    if (fascicoloId === targetFascicoloId) return;
+    await db.fascicoli.update(fascicoloId, { parentId: targetFascicoloId });
+    await fetchFascicoli();
+  };
+
   const handleMoveOrCopy = async (docId: number, targetFascicoloId: number, action: 'move' | 'copy') => {
     if (action === 'move') {
       await db.documents.update(docId, { fascicoloId: targetFascicoloId });
@@ -1448,6 +1454,7 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
             handleCreateSubFascicolo={handleCreateSubFascicolo}
             handleUpload={handleUpload}
             handleMoveOrCopy={handleMoveOrCopy}
+            handleMoveFascicolo={handleMoveFascicolo}
             handleDeleteDocument={handleDeleteDocument}
             handleRenameDocument={handleRenameDocument}
             handleRenameFascicolo={handleRenameFascicolo}
