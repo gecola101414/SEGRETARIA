@@ -180,6 +180,7 @@ export default function App() {
   const [trashDocuments, setTrashDocuments] = useState<DocumentArchive[]>([]);
   const [trashFascicoli, setTrashFascicoli] = useState<Fascicolo[]>([]);
   const [activeView, setActiveView] = useState<'chat' | 'archivio' | 'agenda'>('chat');
+  const [isSavingNote, setIsSavingNote] = useState(false);
   const [query, setQuery] = useState('');
   const [queryFascicoloId, setQueryFascicoloId] = useState<number | null>(null);
   const [fileCategory, setFileCategory] = useState('');
@@ -332,7 +333,15 @@ ${greetingInstruction}
 
   const fetchFascicoloDocuments = async (fascicoloId: number) => {
     const docs = await db.documents.where('fascicoloId').equals(fascicoloId).filter(d => !d.deleted).toArray();
-    setFascicoloDocuments(docs);
+    const docsWithSummary = docs.map(doc => {
+      try {
+        const parsed = JSON.parse(doc.jsonContent);
+        return { ...doc, summary: parsed.summary || '' };
+      } catch (e) {
+        return doc;
+      }
+    });
+    setFascicoloDocuments(docsWithSummary);
   };
 
   const fetchAppointmentDocuments = async (appointmentId: number) => {
@@ -1288,18 +1297,95 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
     }
   };
 
+  const renderPdfContent = (doc: jsPDF, content: string) => {
+    // Header background
+    doc.setFillColor(240, 240, 240);
+    doc.rect(0, 0, 210, 25, 'F');
+    
+    // Header title
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(0, 0, 0);
+    doc.text(`Scheda Nota - ${new Date().toLocaleDateString()}`, 105, 15, { align: 'center' });
+    
+    // Content
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(12);
+    doc.setTextColor(50, 50, 50);
+    
+    // Remove asterisks for bolding and handle basic formatting
+    const cleanContent = content.replace(/\*\*/g, '');
+    const splitText = doc.splitTextToSize(cleanContent, 180);
+    
+    let y = 35;
+    for (let i = 0; i < splitText.length; i++) {
+        if (y > 280) {
+            doc.addPage();
+            y = 15;
+        }
+        doc.text(splitText[i], 15, y);
+        y += 7;
+    }
+  };
+
+  const saveNoteToArchive = async (content: string) => {
+    setIsSavingNote(true);
+    try {
+        let rootFascicoloId: number;
+        if (activeFascicoloId) {
+            let currentFascicolo = await db.fascicoli.get(activeFascicoloId);
+            while (currentFascicolo && currentFascicolo.parentId !== undefined) {
+                currentFascicolo = await db.fascicoli.get(currentFascicolo.parentId);
+            }
+            rootFascicoloId = currentFascicolo?.id || (await db.fascicoli.where('name').equals('Dati Generali').first())?.id || 1;
+        } else {
+            rootFascicoloId = (await db.fascicoli.where('name').equals('Dati Generali').first())?.id || 1;
+        }
+
+        const doc = new jsPDF();
+        renderPdfContent(doc, content);
+        
+        const pdfBase64 = doc.output('datauristring').split(',')[1];
+
+        let noteFascicoloId: number;
+        
+        const noteFascicolo = await db.fascicoli
+            .where('name').equals('Note')
+            .filter(f => f.parentId === rootFascicoloId)
+            .first();
+            
+        if (noteFascicolo) {
+            noteFascicoloId = noteFascicolo.id!;
+        } else {
+            noteFascicoloId = await db.fascicoli.add({ 
+                name: 'Note', 
+                parentId: rootFascicoloId,
+                createdAt: new Date() 
+            });
+            fetchFascicoli();
+        }
+
+        await db.documents.add({
+            fileName: `Nota_${new Date().toISOString().slice(0, 10)}.pdf`,
+            category: 'Note',
+            fascicoloId: noteFascicoloId,
+            jsonContent: JSON.stringify({ content }),
+            originalFileBase64: pdfBase64,
+            fileMimeType: 'application/pdf',
+            createdAt: new Date()
+        });
+        alert('Nota archiviata nella cartella Note del fascicolo principale.');
+    } catch (error) {
+        console.error('Error saving note:', error);
+        alert('Errore durante il salvataggio della nota.');
+    } finally {
+        setIsSavingNote(false);
+    }
+  };
+
   const generatePDF = (content: string) => {
     const doc = new jsPDF();
-    const splitText = doc.splitTextToSize(content, 180);
-    let y = 15;
-    for (let i = 0; i < splitText.length; i++) {
-      if (y > 280) {
-        doc.addPage();
-        y = 15;
-      }
-      doc.text(splitText[i], 15, y);
-      y += 7;
-    }
+    renderPdfContent(doc, content);
     doc.save('documento.pdf');
   };
 
@@ -1394,20 +1480,31 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
                         <button 
                           onClick={() => navigator.clipboard.writeText(msg.content.includes('---') ? msg.content.split('---')[1].trim() : msg.content.replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())}
                           className="text-xs text-blue-600 font-bold flex items-center gap-1 cursor-pointer"
+                          title="Copia"
                         >
-                          <Copy className="w-3 h-3" /> Copia
+                          <Copy className="w-4 h-4" />
                         </button>
                         <button 
                           onClick={() => shareToWhatsApp(msg.content.includes('---') ? msg.content.split('---')[1].trim() : msg.content.replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())} 
                           className="text-xs text-green-600 font-bold flex items-center gap-1 cursor-pointer"
+                          title="Condividi"
                         >
-                          <Share2 className="w-3 h-3" /> Condividi
+                          <Share2 className="w-4 h-4" />
                         </button>
                         <button 
                           onClick={() => generatePDF(msg.content.includes('---') ? msg.content.split('---')[1].trim() : msg.content.replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())} 
                           className="text-xs text-red-600 font-bold flex items-center gap-1 cursor-pointer"
+                          title="Scarica PDF"
                         >
-                          <FileText className="w-3 h-3" /> Scarica PDF
+                          <FileText className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => saveNoteToArchive(msg.content.includes('---') ? msg.content.split('---')[1].trim() : msg.content.replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())} 
+                          className="text-xs text-purple-600 font-bold flex items-center gap-1 cursor-pointer"
+                          title="Archivia PDF"
+                          disabled={isSavingNote}
+                        >
+                          {isSavingNote ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
                         </button>
                       </div>
                     </div>

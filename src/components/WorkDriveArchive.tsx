@@ -97,7 +97,7 @@ export default function WorkDriveArchive({
             e.stopPropagation();
             setHighlightedFascicoloId(null);
             if (draggedDoc) {
-              handleMoveOrCopy(draggedDoc.id!, f.id!, 'copy');
+              setModalState({ show: true, doc: draggedDoc, targetFascicolo: f });
               setDraggedDoc(null);
             } else if (draggedFascicolo && draggedFascicolo.id !== f.id) {
               handleMoveFascicolo(draggedFascicolo.id!, f.id!);
@@ -197,6 +197,7 @@ export default function WorkDriveArchive({
                   <th className="p-2">Nome</th>
                   <th className="p-2">Data</th>
                   <th className="p-2">Categoria</th>
+                  <th className="p-2">AI</th>
                 </tr>
               </thead>
               <tbody>
@@ -209,9 +210,25 @@ export default function WorkDriveArchive({
                     className={`border-b hover:bg-gray-50 cursor-pointer ${selectedDocId === doc.id ? 'bg-blue-50' : ''}`}
                     onClick={() => setSelectedDocId(doc.id!)}
                   >
-                    <td className="p-2 flex items-center gap-2"><FileText className="w-4 h-4 text-blue-500" /> {doc.fileName}</td>
+                    <td className="p-2 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-blue-500" /> 
+                      <span className="cursor-pointer hover:text-blue-700" onClick={() => {
+                        const blob = new Blob([new Uint8Array(atob(doc.originalFileBase64).split('').map(c => c.charCodeAt(0)))], { type: doc.fileMimeType });
+                        const url = URL.createObjectURL(blob);
+                        window.open(url, '_blank');
+                      }}>
+                        {doc.fileName}
+                      </span>
+                    </td>
                     <td className="p-2">{doc.createdAt.toLocaleDateString()}</td>
                     <td className="p-2">{doc.category}</td>
+                    <td className="p-2">
+                      <button className="text-purple-500 hover:text-purple-700" title="Sintesi AI" onClick={() => {
+                        alert("Sintesi AI: " + (doc.summary || "Nessuna sintesi disponibile."));
+                      }}>
+                        <Info className="w-4 h-4" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -295,13 +312,32 @@ export default function WorkDriveArchive({
       )}
       {modalState.show && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded shadow-lg">
-            <h2 className="font-bold mb-4">Sposta o Copia File</h2>
-            <p className="mb-4">Cosa vuoi fare con {modalState.doc?.fileName} verso {modalState.targetFascicolo?.name}?</p>
-            <div className="flex gap-2">
-              <button onClick={() => { handleMoveOrCopy(modalState.doc!.id!, modalState.targetFascicolo!.id!, 'move'); setModalState({ show: false, doc: null, targetFascicolo: null }); }} className="bg-blue-500 text-white px-4 py-2 rounded">Sposta</button>
-              <button onClick={() => { handleMoveOrCopy(modalState.doc!.id!, modalState.targetFascicolo!.id!, 'copy'); setModalState({ show: false, doc: null, targetFascicolo: null }); }} className="bg-green-500 text-white px-4 py-2 rounded">Copia</button>
-              <button onClick={() => setModalState({ show: false, doc: null, targetFascicolo: null })} className="bg-gray-500 text-white px-4 py-2 rounded">Annulla</button>
+          <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-sm w-full">
+            <h2 className="text-xl font-bold mb-6 text-gray-800 text-center">Trasferimento File</h2>
+            <p className="mb-8 text-gray-600 text-center">
+              Cosa desideri fare con <strong>{modalState.doc?.fileName}</strong> verso <strong>{modalState.targetFascicolo?.name}</strong>?
+            </p>
+            <div className="flex gap-4 justify-center">
+              <button 
+                onClick={() => { handleMoveOrCopy(modalState.doc!.id!, modalState.targetFascicolo!.id!, 'move'); setModalState({ show: false, doc: null, targetFascicolo: null }); }} 
+                className="flex flex-col items-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 px-6 py-4 rounded-xl transition-all"
+              >
+                <RotateCcw className="w-8 h-8" />
+                <span>Sposta</span>
+              </button>
+              <button 
+                onClick={() => { handleMoveOrCopy(modalState.doc!.id!, modalState.targetFascicolo!.id!, 'copy'); setModalState({ show: false, doc: null, targetFascicolo: null }); }} 
+                className="flex flex-col items-center gap-2 bg-green-50 hover:bg-green-100 text-green-700 px-6 py-4 rounded-xl transition-all"
+              >
+                <Plus className="w-8 h-8" />
+                <span>Copia</span>
+              </button>
+              <button 
+                onClick={() => setModalState({ show: false, doc: null, targetFascicolo: null })} 
+                className="bg-gray-100 hover:bg-gray-200 text-gray-600 px-6 py-4 rounded-xl transition-all"
+              >
+                Annulla
+              </button>
             </div>
           </div>
         </div>

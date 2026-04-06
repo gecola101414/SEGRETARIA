@@ -53,6 +53,7 @@ export interface DocumentArchive {
   fileMimeType: string;
   createdAt: Date;
   deleted?: boolean;
+  summary?: string; // Added summary field
 }
 
 class SmartSecretaryDB extends Dexie {
