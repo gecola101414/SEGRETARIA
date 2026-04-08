@@ -56,21 +56,34 @@ export interface DocumentArchive {
   summary?: string; // Added summary field
 }
 
+export interface NeuronalPacket {
+  id?: number;
+  type: 'fact' | 'preference' | 'entity' | 'emotional_context' | 'goal' | 'relationship';
+  content: string;
+  sourceMessageId?: number;
+  confidence: number; // 0 to 1
+  tags: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 class SmartSecretaryDB extends Dexie {
   messages!: Table<Message>;
   appointments!: Table<Appointment>;
   documents!: Table<DocumentArchive>;
   fascicoli!: Table<Fascicolo>;
   weather!: Table<Weather>;
+  neuronalPackets!: Table<NeuronalPacket>;
 
   constructor() {
     super('SmartSecretaryDB');
-    this.version(10).stores({
+    this.version(11).stores({
       messages: '++id, sender, type, createdAt',
       appointments: '++id, date, time',
       documents: '++id, fileName, category, fascicoloId, deleted',
       fascicoli: '++id, name, deleted',
-      weather: '++id, date, location'
+      weather: '++id, date, location',
+      neuronalPackets: '++id, type, *tags, createdAt'
     });
   }
 }

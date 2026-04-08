@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Folder, FolderOpen, FileText, Upload, Plus, Search, ChevronRight, Info, Trash2, MoreVertical, Download, Edit2, RotateCcw, X } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Folder, FolderOpen, FileText, Upload, Plus, Search, ChevronRight, ChevronUp, ChevronDown, Info, Trash2, MoreVertical, Download, Edit2, RotateCcw, X, Archive } from 'lucide-react';
 import { DocumentArchive, Fascicolo, db } from '../db/database';
 
 interface WorkDriveArchiveProps {
@@ -48,6 +48,42 @@ export default function WorkDriveArchive({
   const [modalState, setModalState] = useState<{ show: boolean, doc: DocumentArchive | null, targetFascicolo: Fascicolo | null }>({ show: false, doc: null, targetFascicolo: null });
 
   const [expandedFascicoli, setExpandedFascicoli] = useState<Set<number>>(new Set());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollInterval = useRef<NodeJS.Timeout | null>(null);
+  const [showUpArrow, setShowUpArrow] = useState(false);
+  const [showDownArrow, setShowDownArrow] = useState(false);
+
+  const checkScroll = () => {
+    if (scrollRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+      setShowUpArrow(scrollTop > 10);
+      setShowDownArrow(scrollTop + clientHeight < scrollHeight - 10);
+    }
+  };
+
+  useEffect(() => {
+    checkScroll();
+    // Also check on window resize
+    window.addEventListener('resize', checkScroll);
+    return () => window.removeEventListener('resize', checkScroll);
+  }, [fascicoli, expandedFascicoli]);
+
+  const startScrolling = (direction: 'up' | 'down') => {
+    if (scrollInterval.current) return;
+    scrollInterval.current = setInterval(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollBy({ top: direction === 'up' ? -15 : 15 });
+        checkScroll();
+      }
+    }, 30);
+  };
+
+  const stopScrolling = () => {
+    if (scrollInterval.current) {
+      clearInterval(scrollInterval.current);
+      scrollInterval.current = null;
+    }
+  };
 
   const toggleExpand = (id: number) => {
     const next = new Set(expandedFascicoli);
@@ -156,21 +192,65 @@ export default function WorkDriveArchive({
   };
 
   return (
-    <div className="flex h-full bg-white text-gray-800">
+    <div className="flex h-full bg-white text-gray-800 overflow-hidden">
       {/* Sidebar */}
-      <div className="w-64 bg-gray-50 border-r flex flex-col">
-        <div className="p-4 font-bold text-lg border-b flex justify-between items-center">
-          <span>WorkDrive</span>
-          <button onClick={() => setActiveView('trash')} className="text-gray-500 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
-        </div>
-        <nav className="flex-grow p-2 space-y-1">
-          <div className="flex items-center justify-between px-2 py-2">
-            <div className="text-xs font-bold text-gray-500 uppercase cursor-pointer hover:text-gray-800" onClick={() => setActiveView('folder')}>Fascicoli</div>
-            <button onClick={handleCreateFascicolo} className="text-blue-600 hover:bg-blue-100 rounded-full p-1 border border-blue-600"><Plus className="w-4 h-4" /></button>
+      <div className="w-72 bg-gray-50 border-r flex flex-col relative group/sidebar shrink-0">
+        <div className="p-4 font-bold text-lg border-b flex justify-between items-center bg-white z-20">
+          <div className="flex items-center gap-2">
+            <Archive className="w-5 h-5 text-blue-600" />
+            <span>WorkDrive</span>
           </div>
-          {sortedRoot.map(f => renderFascicolo(f))}
-        </nav>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={handleCreateFascicolo} 
+              className="text-blue-600 hover:bg-blue-600 hover:text-white rounded-full p-1 border border-blue-600 transition-all"
+              title="Nuovo Fascicolo"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+            <button onClick={() => setActiveView('trash')} className="text-gray-400 hover:text-red-500 transition-colors" title="Cestino">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
 
+        <div className="relative flex-grow overflow-hidden flex flex-col">
+          {/* Up Arrow Overlay */}
+          <div 
+            className={`absolute top-0 left-0 right-0 z-30 h-12 bg-gradient-to-b from-gray-50 to-transparent flex items-start justify-center cursor-pointer transition-opacity duration-300 ${showUpArrow ? ((draggedDoc || draggedFascicolo) ? 'opacity-100' : 'opacity-0 group-hover/sidebar:opacity-100') : 'opacity-0 pointer-events-none'}`}
+            onMouseEnter={() => startScrolling('up')}
+            onMouseLeave={stopScrolling}
+            onDragOver={(e) => {
+              e.preventDefault();
+              startScrolling('up');
+            }}
+            onDragLeave={stopScrolling}
+          >
+            <ChevronUp className="w-6 h-6 text-blue-600 mt-1 animate-bounce" />
+          </div>
+
+          <nav 
+            ref={scrollRef}
+            onScroll={checkScroll}
+            className="flex-grow overflow-y-auto no-scrollbar p-3 space-y-1"
+          >
+            {sortedRoot.map(f => renderFascicolo(f))}
+          </nav>
+
+          {/* Down Arrow Overlay */}
+          <div 
+            className={`absolute bottom-0 left-0 right-0 z-30 h-12 bg-gradient-to-t from-gray-50 to-transparent flex items-end justify-center cursor-pointer transition-opacity duration-300 ${showDownArrow ? ((draggedDoc || draggedFascicolo) ? 'opacity-100' : 'opacity-0 group-hover/sidebar:opacity-100') : 'opacity-0 pointer-events-none'}`}
+            onMouseEnter={() => startScrolling('down')}
+            onMouseLeave={stopScrolling}
+            onDragOver={(e) => {
+              e.preventDefault();
+              startScrolling('down');
+            }}
+            onDragLeave={stopScrolling}
+          >
+            <ChevronDown className="w-6 h-6 text-blue-600 mb-1 animate-bounce" />
+          </div>
+        </div>
       </div>
 
       {/* Main Area */}
@@ -178,8 +258,9 @@ export default function WorkDriveArchive({
         {/* Toolbar */}
         <div className="p-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm text-gray-600">
-            <span>I Miei File</span>
-            {activeFascicolo && <><ChevronRight className="w-4 h-4" /> <span className="font-bold text-lg">{activeFascicolo.name}</span></>}
+            <span className="cursor-pointer hover:text-blue-600 transition-colors" onClick={() => { setActiveView('folder'); setActiveFascicoloId(null); }}>I Miei File</span>
+            {activeView === 'trash' && <><ChevronRight className="w-4 h-4" /> <span className="font-bold text-lg text-red-600">Cestino</span></>}
+            {activeView === 'folder' && activeFascicolo && <><ChevronRight className="w-4 h-4" /> <span className="font-bold text-lg text-blue-700">{activeFascicolo.name}</span></>}
           </div>
           <div className="flex gap-2">
             <input type="file" id="file-upload" className="hidden" onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])} />
@@ -235,7 +316,12 @@ export default function WorkDriveArchive({
             </table>
           ) : (
             <div className="space-y-2">
-              <h2 className="font-bold text-lg mb-4">Cestino</h2>
+              {trashFascicoli.length === 0 && trashDocuments.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <Trash2 className="w-12 h-12 mb-2 opacity-20" />
+                  <p>Il cestino è vuoto</p>
+                </div>
+              )}
               {trashFascicoli.map(f => (
                 <div key={f.id} className="flex items-center justify-between p-2 text-sm text-gray-600 border-b">
                   {f.name} (Fascicolo)
@@ -255,14 +341,16 @@ export default function WorkDriveArchive({
                     <button onClick={() => handleRecover('document', d.id!)} className="text-green-600 hover:text-green-800" title="Recupera">
                       <RotateCcw className="w-4 h-4" />
                     </button>
-                    <button onClick={() => {
+                    <button onClick={async () => {
                       if (confirm("Eliminare definitivamente?")) {
-                        db.documents.delete(d.id!).then(() => {
-                          // Trigger a refresh by forcing a re-render if possible, 
-                          // but for now, the user will need to refresh or we need a better way.
-                          // Since I cannot easily trigger a refresh here, I will just perform the delete.
-                          window.location.reload(); 
-                        });
+                        await db.documents.delete(d.id!);
+                        // Since we are in a component, we should ideally call a refresh function 
+                        // passed from props, but for now we'll use handleRecover logic style
+                        // or a local state update if we had one. 
+                        // To be safe and immediate, we'll use a reload or better, 
+                        // the parent should be listening to DB changes.
+                        // However, the user asked for immediate update.
+                        window.location.reload();
                       }
                     }} className="text-red-600 hover:text-red-800" title="Elimina definitivamente">
                       <X className="w-4 h-4" />

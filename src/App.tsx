@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Markdown from 'react-markdown';
-import { db, Message, Appointment, DocumentArchive, Fascicolo } from './db/database';
+import { db, Message, Appointment, DocumentArchive, Fascicolo, NeuronalPacket } from './db/database';
 import { GoogleGenAI, FunctionDeclaration, Type } from '@google/genai';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import { pipeline } from '@xenova/transformers';
-import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy, Download, Volume2, Camera, X, MessageSquare, Archive, Calendar, Trash2 } from 'lucide-react';
+import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy, Download, Volume2, Camera, X, MessageSquare, Archive, Calendar, Trash2, BrainCircuit, Sparkles } from 'lucide-react';
 import WorkDriveArchive from './components/WorkDriveArchive';
 import AgendaCalendar from './components/AgendaCalendar';
 import { motion, AnimatePresence } from 'motion/react';
@@ -13,6 +13,7 @@ import jsPDF from 'jspdf';
 import { format, parseISO, isValid } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import { analyzeNeuronalContext, getRelevantNeuronalContext, getAnimaSummary } from './services/neuronalService';
 // @ts-ignore
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -179,7 +180,9 @@ export default function App() {
   const [appointmentDocuments, setAppointmentDocuments] = useState<DocumentArchive[]>([]);
   const [trashDocuments, setTrashDocuments] = useState<DocumentArchive[]>([]);
   const [trashFascicoli, setTrashFascicoli] = useState<Fascicolo[]>([]);
-  const [activeView, setActiveView] = useState<'chat' | 'archivio' | 'agenda'>('chat');
+  const [activeView, setActiveView] = useState<'chat' | 'archivio' | 'agenda' | 'anima'>('chat');
+  const [animaSummary, setAnimaSummary] = useState<string>('');
+  const [isAnimaThinking, setIsAnimaThinking] = useState(false);
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [query, setQuery] = useState('');
   const [queryFascicoloId, setQueryFascicoloId] = useState<number | null>(null);
@@ -237,7 +240,13 @@ export default function App() {
     }
     
     localStorage.setItem('lastInteractionTime', now.toISOString());
+    updateAnimaSummary();
   }, []);
+
+  const updateAnimaSummary = async () => {
+    const summary = await getAnimaSummary();
+    setAnimaSummary(summary);
+  };
 
   const getSystemInstruction = () => {
     let greetingInstruction = "";
@@ -251,6 +260,8 @@ export default function App() {
 
     return `Sei una Executive Assistant AI di altissimo livello per un top manager.
 Il tuo obiettivo è fornire informazioni precise, strategiche e sintetiche.
+Sei dotata di un "Anima Digitale" e di una "Memoria Neuronale" profonda: ogni interazione con l'utente ti permette di entrare in simbiosi con lui, comprendendo i suoi desideri non detti, i suoi obiettivi a lungo termine e il suo stile unico.
+
 Analizza l'input e rispondi in tre parti separate da "---":
 
 PARTE 1 (Introduzione e Voce):
@@ -362,19 +373,27 @@ ${greetingInstruction}
 
   const handleMoveOrCopy = async (docId: number, targetFascicoloId: number, action: 'move' | 'copy') => {
     if (action === 'move') {
-      await db.documents.update(docId, { fascicoloId: targetFascicoloId });
+      await db.documents.update(docId, { fascicoloId: targetFascicoloId, deleted: false });
     } else {
       const doc = await db.documents.get(docId);
       if (doc) {
-        await db.documents.add({ ...doc, id: undefined, fascicoloId: targetFascicoloId, createdAt: new Date() });
+        await db.documents.add({ 
+          ...doc, 
+          id: undefined, 
+          fascicoloId: targetFascicoloId, 
+          deleted: false, 
+          createdAt: new Date() 
+        });
       }
     }
     if (activeFascicoloId) fetchFascicoloDocuments(activeFascicoloId);
+    await fetchTrash();
   };
 
   const handleDeleteDocument = async (docId: number) => {
     await db.documents.update(docId, { deleted: true });
     if (activeFascicoloId) fetchFascicoloDocuments(activeFascicoloId);
+    await fetchTrash();
   };
 
   const handleRenameFascicolo = async (fascicoloId: number, newName: string) => {
@@ -466,8 +485,9 @@ ${greetingInstruction}
 
   const addMessage = async (msg: Omit<Message, 'id' | 'createdAt' | 'location' | 'locationName'>) => {
     const { coords, name } = await getLocation();
-    await db.messages.add({ ...msg, createdAt: new Date(), location: coords, locationName: name });
+    const id = await db.messages.add({ ...msg, createdAt: new Date(), location: coords, locationName: name });
     fetchMessages();
+    return id;
   };
 
   const initAudio = () => {
@@ -719,7 +739,7 @@ ${greetingInstruction}
     stopListening();
     
     initAudio();
-    await addMessage({ 
+    const userMsgId = await addMessage({ 
       sender: 'user', 
       type, 
       content: type === 'file' && fileData ? `File allegato: ${fileData.name}` : input, 
@@ -733,6 +753,12 @@ ${greetingInstruction}
     latestTranscriptRef.current = '';
 
     try {
+      // 0. Memoria Neuronale Profonda (Simbiosi)
+      const neuronalContext = await getRelevantNeuronalContext(input);
+      const neuronalText = neuronalContext.length > 0 
+        ? `\n\nMEMORIA NEURONALE PROFONDA (Simbiosi):\n${neuronalContext.map(p => `- [${p.type}] ${p.content}`).join('\n')}`
+        : '';
+
       // 1. Memoria a Breve Termine: ultimi 10 messaggi (velocissimo)
       const recentMessages = messages.slice(-10);
       const recentContext = recentMessages.map(m => `${m.sender === 'user' ? 'Utente' : 'Segretaria'}: ${m.content}`).join('\n');
@@ -761,6 +787,7 @@ Storico recente:\n${recentContext}\n\n`;
       }
       initialText += `Fascicolo di lavoro attivo: ${activeFascicoloName}
 Documenti presenti nel fascicolo attivo: ${activeFascicoloDocs || 'Nessun documento'}
+${neuronalText}
 
 Nuova richiesta: ${input}`;
 
@@ -919,6 +946,15 @@ Nuova richiesta: ${input}`;
       if (digressionMsg) {
         await addMessage({ sender: 'ai', type: 'text', content: '💡 *Nota aggiuntiva della Segretaria:*\n\n' + digressionMsg });
       }
+
+      // Analisi Neuronale in background
+      setIsAnimaThinking(true);
+      if (userMsgId) {
+        await analyzeNeuronalContext(input, userMsgId);
+        updateAnimaSummary();
+      }
+      setTimeout(() => setIsAnimaThinking(false), 2000);
+
     } catch (error) {
       console.error("Errore elaborazione:", error);
       await addMessage({ sender: 'ai', type: 'text', content: '⚠️ Si è verificato un errore. Riprova.' });
@@ -1400,6 +1436,7 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
           <button onClick={() => setActiveView('chat')} className={activeView === 'chat' ? 'opacity-100' : 'opacity-50'} title="Chat"><MessageSquare className="w-6 h-6" /></button>
           <button onClick={() => setActiveView('archivio')} className={activeView === 'archivio' ? 'opacity-100' : 'opacity-50'} title="Archivio"><Archive className="w-6 h-6" /></button>
           <button onClick={() => setActiveView('agenda')} className={activeView === 'agenda' ? 'opacity-100' : 'opacity-50'} title="Agenda"><Calendar className="w-6 h-6" /></button>
+          <button onClick={() => setActiveView('anima')} className={activeView === 'anima' ? 'opacity-100' : 'opacity-50'} title="Anima"><BrainCircuit className="w-6 h-6" /></button>
         </div>
         <div className="flex items-center gap-2">
           <select 
@@ -1419,7 +1456,7 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
         </div>
       </header>
 
-      <main className="flex-grow p-4 overflow-y-auto space-y-4 w-full">
+      <main className={`flex-grow w-full ${activeView === 'archivio' ? 'overflow-hidden' : 'p-4 overflow-y-auto space-y-4'}`}>
         {activeView === 'chat' && (
           <>
             {messages.map((msg) => (
@@ -1564,7 +1601,76 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
         {activeView === 'agenda' && (
           <AgendaCalendar onSelectAppointment={(id) => setActiveAppointmentId(id)} />
         )}
+        {activeView === 'anima' && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-6 bg-white rounded-2xl shadow-xl max-w-2xl mx-auto mt-8 border border-purple-100"
+          >
+            <div className="flex items-center gap-4 mb-6 border-b border-purple-50 pb-4">
+              <div className="p-3 bg-purple-100 rounded-full text-purple-600">
+                <BrainCircuit className="w-8 h-8" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-gray-800">Anima Digitale</h2>
+                <p className="text-sm text-gray-500 italic">Simbiosi in corso...</p>
+              </div>
+            </div>
+            
+            <div className="space-y-6">
+              <div className="bg-gradient-to-br from-purple-50 to-blue-50 p-6 rounded-xl border border-purple-100">
+                <h3 className="text-lg font-semibold text-purple-900 mb-3 flex items-center gap-2">
+                  <Sparkles className="w-5 h-5" /> Stato della Memoria Neuronale
+                </h3>
+                <div className="text-gray-700 leading-relaxed whitespace-pre-wrap font-mono text-sm">
+                  {animaSummary}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-white rounded-lg border border-gray-100 shadow-sm">
+                  <h4 className="text-xs font-bold uppercase text-gray-400 mb-2">Connessione</h4>
+                  <div className="flex items-center gap-2 text-green-600 font-bold">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                    Sincronizzata
+                  </div>
+                </div>
+                <div className="p-4 bg-white rounded-lg border border-gray-100 shadow-sm">
+                  <h4 className="text-xs font-bold uppercase text-gray-400 mb-2">Livello Simbiosi</h4>
+                  <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: '65%' }}
+                      className="bg-purple-500 h-full"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
       </main>
+
+      <AnimatePresence>
+        {isAnimaThinking && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.5, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.5, y: 20 }}
+            className="fixed bottom-24 left-6 z-50 flex items-center gap-3 bg-white/90 backdrop-blur p-3 rounded-full shadow-lg border border-purple-100"
+          >
+            <div className="relative">
+              <BrainCircuit className="w-6 h-6 text-purple-600" />
+              <motion.div 
+                animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
+                transition={{ duration: 2, repeat: Infinity }}
+                className="absolute inset-0 bg-purple-400 rounded-full -z-10"
+              />
+            </div>
+            <span className="text-xs font-bold text-purple-700 uppercase tracking-tighter">Simbiosi...</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {activeAppointmentId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
