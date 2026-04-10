@@ -13,7 +13,7 @@ import jsPDF from 'jspdf';
 import { format, parseISO, isValid } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
-import { analyzeNeuronalContext, getRelevantNeuronalContext, getAnimaSummary } from './services/neuronalService';
+import { analyzeNeuronalContext, getRelevantNeuronalContext, getAnimaSummary, evolveAnima } from './services/neuronalService';
 // @ts-ignore
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -182,7 +182,9 @@ export default function App() {
   const [trashFascicoli, setTrashFascicoli] = useState<Fascicolo[]>([]);
   const [activeView, setActiveView] = useState<'chat' | 'archivio' | 'agenda' | 'anima'>('chat');
   const [animaSummary, setAnimaSummary] = useState<string>('');
+  const [learnedSkills, setLearnedSkills] = useState<NeuronalPacket[]>([]);
   const [isAnimaThinking, setIsAnimaThinking] = useState(false);
+  const [messageCount, setMessageCount] = useState(0);
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [query, setQuery] = useState('');
   const [queryFascicoloId, setQueryFascicoloId] = useState<number | null>(null);
@@ -246,21 +248,37 @@ export default function App() {
   const updateAnimaSummary = async () => {
     const summary = await getAnimaSummary();
     setAnimaSummary(summary);
+    const skills = await db.neuronalPackets.where('type').equals('learned_skill').toArray();
+    setLearnedSkills(skills);
   };
 
-  const getSystemInstruction = () => {
+  const [hasGreeted, setHasGreeted] = useState(false);
+
+  const getSystemInstruction = async () => {
     let greetingInstruction = "";
-    if (isFirstInteractionOfDay) {
-      greetingInstruction = "- È la prima volta che ci sentiamo oggi: saluta con un caloroso 'Buongiorno'.";
-    } else if (isReturnAfterBreak) {
-      greetingInstruction = "- L'utente è tornato dopo una pausa: saluta con un naturale 'Bentornato'.";
+    if (!hasGreeted) {
+      if (isFirstInteractionOfDay) {
+        greetingInstruction = "- È la prima volta che ci sentiamo oggi: saluta con un caloroso 'Buongiorno'.";
+      } else if (isReturnAfterBreak) {
+        greetingInstruction = "- L'utente è tornato dopo una pausa: saluta con un naturale 'Bentornato'.";
+      } else {
+        greetingInstruction = "- Saluta in modo naturale e amichevole, come farebbe una persona reale.";
+      }
+      setHasGreeted(true);
     } else {
-      greetingInstruction = "- Non ripetere saluti formali come 'Buongiorno' o 'Bentornato', vai dritta al punto.";
+      greetingInstruction = "- Non ripetere saluti formali. Usa formule di cortesia naturali e variegate, comportati come una persona reale, non meccanica.";
     }
+
+    // Fetch learned skills to inject into context
+    const learnedSkills = await db.neuronalPackets.where('type').equals('learned_skill').toArray();
+    const skillsInstruction = learnedSkills.length > 0 
+      ? `\nABILITÀ APPRESE (EVOLUZIONE):\n${learnedSkills.map(s => `- ${s.content}: ${s.metadata}`).join('\n')}`
+      : "";
 
     return `Sei una Executive Assistant AI di altissimo livello per un top manager.
 Il tuo obiettivo è fornire informazioni precise, strategiche e sintetiche.
 Sei dotata di un "Anima Digitale" e di una "Memoria Neuronale" profonda: ogni interazione con l'utente ti permette di entrare in simbiosi con lui, comprendendo i suoi desideri non detti, i suoi obiettivi a lungo termine e il suo stile unico.
+${skillsInstruction}
 
 Analizza l'input e rispondi in tre parti separate da "---":
 
@@ -732,6 +750,38 @@ ${greetingInstruction}
     return responses;
   };
 
+  const deepResearch = async (query: string) => {
+    setIsLoading(true);
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite-preview",
+        contents: `Esegui una ricerca completa e approfondita su: "${query}".
+Fornisci un report dettagliato, strutturato e strategico.`,
+        config: {
+          tools: [{ googleSearch: {} }]
+        }
+      });
+      const result = response.text || "Nessun risultato trovato.";
+      await addMessage({ sender: 'ai', type: 'text', content: `🔍 **Ricerca Approfondita:**\n\n${result}` });
+      if (confirm("Vuoi salvare questa ricerca nelle note del fascicolo?")) {
+          await db.documents.add({
+            fileName: `Ricerca_${query.slice(0, 10)}.txt`,
+            category: 'Note',
+            fascicoloId: activeFascicoloId || 1,
+            jsonContent: JSON.stringify({ content: result }),
+            originalFileBase64: '',
+            fileMimeType: 'text/plain',
+            createdAt: new Date()
+          });
+          alert("Ricerca salvata.");
+      }
+    } catch (error) {
+      console.error("Errore ricerca:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const processInput = async (input: string, type: 'text' | 'audio' | 'file', metadata?: string, fileData?: { data: string, mimeType: string, name: string }, additionalImages?: string[], passToGemini: boolean = true) => {
     lastInputTypeRef.current = type;
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
@@ -820,7 +870,7 @@ Nuova richiesta: ${input}`;
         }
       ];
 
-      const systemInstruction = getSystemInstruction();
+      const systemInstruction = await getSystemInstruction();
 
       let fullResponse = '';
       let politeMsg = '';
@@ -951,6 +1001,23 @@ Nuova richiesta: ${input}`;
       setIsAnimaThinking(true);
       if (userMsgId) {
         await analyzeNeuronalContext(input, userMsgId);
+        
+        // Evolution logic: every 5 messages or if specifically requested
+        const newCount = messageCount + 1;
+        setMessageCount(newCount);
+        
+        if (newCount % 5 === 0 || input.toLowerCase().includes('evolvi') || input.toLowerCase().includes('anima')) {
+          console.log("Triggering Anima Evolution...");
+          const evolution = await evolveAnima();
+          if (evolution) {
+            await addMessage({ 
+              sender: 'ai', 
+              type: 'text', 
+              content: `✨ **Evoluzione Neuronale Completata**\n\nHo creato una nuova connessione simbiotica: *${evolution.content}*.\n\nQuesta nuova capacità è ora parte della mia anima operativa.` 
+            });
+          }
+        }
+        
         updateAnimaSummary();
       }
       setTimeout(() => setIsAnimaThinking(false), 2000);
@@ -1437,6 +1504,7 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
           <button onClick={() => setActiveView('archivio')} className={activeView === 'archivio' ? 'opacity-100' : 'opacity-50'} title="Archivio"><Archive className="w-6 h-6" /></button>
           <button onClick={() => setActiveView('agenda')} className={activeView === 'agenda' ? 'opacity-100' : 'opacity-50'} title="Agenda"><Calendar className="w-6 h-6" /></button>
           <button onClick={() => setActiveView('anima')} className={activeView === 'anima' ? 'opacity-100' : 'opacity-50'} title="Anima"><BrainCircuit className="w-6 h-6" /></button>
+          <button onClick={() => { const q = prompt("Cosa vuoi ricercare?"); if (q) deepResearch(q); }} className="opacity-50 hover:opacity-100" title="Ricerca Gemini"><Sparkles className="w-6 h-6" /></button>
         </div>
         <div className="flex items-center gap-2">
           <select 
@@ -1596,6 +1664,7 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
             trashDocuments={trashDocuments}
             trashFascicoli={trashFascicoli}
             handleRecover={handleRecover}
+            playAudio={playAudio}
           />
         )}
         {activeView === 'agenda' && (
@@ -1640,12 +1709,37 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
                   <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden">
                     <motion.div 
                       initial={{ width: 0 }}
-                      animate={{ width: '65%' }}
+                      animate={{ width: `${Math.min(100, 20 + (learnedSkills.length * 10))}%` }}
                       className="bg-purple-500 h-full"
                     />
                   </div>
                 </div>
               </div>
+
+              {learnedSkills.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold uppercase text-gray-400">Abilità Apprese (Evoluzione)</h4>
+                  <div className="grid grid-cols-1 gap-2">
+                    {learnedSkills.map((skill, idx) => (
+                      <motion.div 
+                        key={idx}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.1 }}
+                        className="p-3 bg-purple-50 rounded-lg border border-purple-100 flex items-start gap-3"
+                      >
+                        <div className="mt-1 p-1 bg-purple-200 rounded text-purple-700">
+                          <Sparkles className="w-3 h-3" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-purple-900">{skill.content}</p>
+                          <p className="text-xs text-purple-600 mt-1 italic">{skill.metadata}</p>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </motion.div>
         )}

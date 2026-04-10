@@ -58,13 +58,14 @@ export interface DocumentArchive {
 
 export interface NeuronalPacket {
   id?: number;
-  type: 'fact' | 'preference' | 'entity' | 'emotional_context' | 'goal' | 'relationship';
+  type: 'fact' | 'preference' | 'entity' | 'emotional_context' | 'goal' | 'relationship' | 'learned_skill';
   content: string;
   sourceMessageId?: number;
   confidence: number; // 0 to 1
   tags: string[];
   createdAt: Date;
   updatedAt: Date;
+  metadata?: string; // For storing dynamic logic or code snippets
 }
 
 class SmartSecretaryDB extends Dexie {
@@ -77,7 +78,7 @@ class SmartSecretaryDB extends Dexie {
 
   constructor() {
     super('SmartSecretaryDB');
-    this.version(11).stores({
+    this.version(12).stores({
       messages: '++id, sender, type, createdAt',
       appointments: '++id, date, time',
       documents: '++id, fileName, category, fascicoloId, deleted',

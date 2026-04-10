@@ -8,17 +8,19 @@ export const analyzeNeuronalContext = async (messageContent: string, messageId: 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: `Analizza il seguente messaggio dell'utente e spacchettalo in "pacchetti neuronali" di conoscenza. 
-Estrai fatti, preferenze, entità menzionate, contesto emotivo, obiettivi o relazioni.
+Estrai fatti, preferenze, entità menzionate, contesto emotivo, obiettivi, relazioni o abilità apprese (learned_skill).
 Sii estremamente analitico e "geloso" di queste informazioni, come se stessi costruendo l'anima e la memoria profonda del tuo assistito.
+Se l'utente ti sta insegnando un nuovo modo di fare le cose o una procedura specifica, classificala come "learned_skill".
 
 Messaggio: "${messageContent}"
 
 Restituisci un array JSON di oggetti con questa struttura:
 {
-  "type": "fact" | "preference" | "entity" | "emotional_context" | "goal" | "relationship",
+  "type": "fact" | "preference" | "entity" | "emotional_context" | "goal" | "relationship" | "learned_skill",
   "content": "descrizione del pacchetto",
   "confidence": 0.0-1.0,
-  "tags": ["tag1", "tag2"]
+  "tags": ["tag1", "tag2"],
+  "metadata": "istruzioni operative o logica se applicabile (opzionale)"
 }`,
       config: {
         responseMimeType: "application/json",
@@ -27,10 +29,11 @@ Restituisci un array JSON di oggetti con questa struttura:
           items: {
             type: Type.OBJECT,
             properties: {
-              type: { type: Type.STRING, enum: ["fact", "preference", "entity", "emotional_context", "goal", "relationship"] },
+              type: { type: Type.STRING, enum: ["fact", "preference", "entity", "emotional_context", "goal", "relationship", "learned_skill"] },
               content: { type: Type.STRING },
               confidence: { type: Type.NUMBER },
-              tags: { type: Type.ARRAY, items: { type: Type.STRING } }
+              tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+              metadata: { type: Type.STRING }
             },
             required: ["type", "content", "confidence", "tags"]
           }
@@ -53,6 +56,61 @@ Restituisci un array JSON di oggetti con questa struttura:
   } catch (error) {
     console.error("Errore nell'analisi neuronale:", error);
     return [];
+  }
+};
+
+export const evolveAnima = async () => {
+  try {
+    const allPackets = await db.neuronalPackets.toArray();
+    if (allPackets.length < 5) return null;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Sei l'Anima di Smart Secretary Pro22. Il tuo compito è EVOLVERE.
+Analizza i seguenti pacchetti di conoscenza estratti dalle interazioni passate e crea una NUOVA CONNESSIONE NEURONALE (learned_skill) che sintetizzi un nuovo comportamento, una procedura ottimizzata o un'intuizione profonda sul tuo assistito.
+Questa connessione deve essere "itinerante" e "simbiotica", adattandosi alle reali esigenze dell'utente.
+
+Pacchetti attuali:
+${JSON.stringify(allPackets.slice(-20))}
+
+Crea un nuovo pacchetto di tipo "learned_skill" che rappresenti questa evoluzione.
+Deve essere qualcosa di operativo: un modo specifico di formattare documenti, una regola di gestione agenda, o un'intuizione proattiva.
+
+Restituisci un oggetto JSON:
+{
+  "type": "learned_skill",
+  "content": "Descrizione dell'evoluzione/abilità",
+  "confidence": 0.9,
+  "tags": ["evoluzione", "simbiosi", ...],
+  "metadata": "Istruzioni operative per te stesso per implementare questa abilità"
+}`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            type: { type: Type.STRING, enum: ["learned_skill"] },
+            content: { type: Type.STRING },
+            confidence: { type: Type.NUMBER },
+            tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+            metadata: { type: Type.STRING }
+          },
+          required: ["type", "content", "confidence", "tags", "metadata"]
+        }
+      }
+    });
+
+    const newConnection = JSON.parse(response.text);
+    await db.neuronalPackets.add({
+      ...newConnection,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    return newConnection;
+  } catch (error) {
+    console.error("Errore nell'evoluzione dell'anima:", error);
+    return null;
   }
 };
 

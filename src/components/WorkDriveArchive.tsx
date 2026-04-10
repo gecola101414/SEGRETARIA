@@ -19,6 +19,7 @@ interface WorkDriveArchiveProps {
   trashDocuments: DocumentArchive[];
   trashFascicoli: Fascicolo[];
   handleRecover: (type: 'document' | 'fascicolo', id: number) => void;
+  playAudio: (text: string) => Promise<void>;
 }
 
 export default function WorkDriveArchive({
@@ -37,9 +38,11 @@ export default function WorkDriveArchive({
   handleDeleteFascicolo,
   trashDocuments,
   trashFascicoli,
-  handleRecover
+  handleRecover,
+  playAudio
 }: WorkDriveArchiveProps) {
   const [selectedDocId, setSelectedDocId] = useState<number | null>(null);
+  const [summaryModal, setSummaryModal] = useState<{ show: boolean, doc: DocumentArchive | null }>({ show: false, doc: null });
   const [draggedDoc, setDraggedDoc] = useState<DocumentArchive | null>(null);
   const [draggedFascicolo, setDraggedFascicolo] = useState<Fascicolo | null>(null);
   const activeFascicolo = fascicoli.find(f => f.id === activeFascicoloId);
@@ -301,12 +304,10 @@ export default function WorkDriveArchive({
                         {doc.fileName}
                       </span>
                     </td>
-                    <td className="p-2">{doc.createdAt.toLocaleDateString()}</td>
+                    <td className="p-2">{doc.createdAt.toLocaleString()}</td>
                     <td className="p-2">{doc.category}</td>
                     <td className="p-2">
-                      <button className="text-purple-500 hover:text-purple-700" title="Sintesi AI" onClick={() => {
-                        alert("Sintesi AI: " + (doc.summary || "Nessuna sintesi disponibile."));
-                      }}>
+                      <button className="text-purple-500 hover:text-purple-700" title="Sintesi AI" onClick={() => setSummaryModal({ show: true, doc })}>
                         <Info className="w-4 h-4" />
                       </button>
                     </td>
@@ -392,10 +393,32 @@ export default function WorkDriveArchive({
           {fascicoloDocuments.find(d => d.id === selectedDocId) && (
             <div className="space-y-2 text-sm">
               <p><strong>Nome:</strong> {fascicoloDocuments.find(d => d.id === selectedDocId)?.fileName}</p>
-              <p><strong>Creato:</strong> {fascicoloDocuments.find(d => d.id === selectedDocId)?.createdAt.toLocaleDateString()}</p>
+              <p><strong>Creato:</strong> {fascicoloDocuments.find(d => d.id === selectedDocId)?.createdAt.toLocaleString()}</p>
               <p><strong>Categoria:</strong> {fascicoloDocuments.find(d => d.id === selectedDocId)?.category}</p>
             </div>
           )}
+        </div>
+      )}
+      {summaryModal.show && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-2xl shadow-2xl max-w-lg w-full">
+            <h2 className="text-xl font-bold mb-4 text-gray-800">Sintesi AI</h2>
+            <div className="text-gray-700 mb-6 whitespace-pre-wrap">{summaryModal.doc?.summary || "Nessuna sintesi disponibile."}</div>
+            <div className="flex gap-4 justify-center">
+              <button 
+                onClick={() => playAudio(summaryModal.doc?.summary || "Nessuna sintesi disponibile.")} 
+                className="bg-blue-600 text-white px-6 py-2 rounded-xl hover:bg-blue-700"
+              >
+                Ascolta
+              </button>
+              <button 
+                onClick={() => setSummaryModal({ show: false, doc: null })} 
+                className="bg-gray-100 px-6 py-2 rounded-xl hover:bg-gray-200"
+              >
+                Chiudi
+              </button>
+            </div>
+          </div>
         </div>
       )}
       {modalState.show && (
