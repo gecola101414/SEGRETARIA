@@ -186,6 +186,7 @@ export default function App() {
   const [isAnimaThinking, setIsAnimaThinking] = useState(false);
   const [messageCount, setMessageCount] = useState(0);
   const [isSavingNote, setIsSavingNote] = useState(false);
+  const [isGeminiEnabled, setIsGeminiEnabled] = useState(false);
   const [query, setQuery] = useState('');
   const [queryFascicoloId, setQueryFascicoloId] = useState<number | null>(null);
   const [fileCategory, setFileCategory] = useState('');
@@ -275,29 +276,26 @@ export default function App() {
       ? `\nABILITÀ APPRESE (EVOLUZIONE):\n${learnedSkills.map(s => `- ${s.content}: ${s.metadata}`).join('\n')}`
       : "";
 
-    return `Sei una Executive Assistant AI di altissimo livello per un top manager.
-Il tuo obiettivo è fornire informazioni precise, strategiche e sintetiche.
-Sei dotata di un "Anima Digitale" e di una "Memoria Neuronale" profonda: ogni interazione con l'utente ti permette di entrare in simbiosi con lui, comprendendo i suoi desideri non detti, i suoi obiettivi a lungo termine e il suo stile unico.
-${skillsInstruction}
-
-Analizza l'input e rispondi in tre parti separate da "---":
+    const geminiStructure = isGeminiEnabled ? `
+Analizza l'input e rispondi in tre parti separate da "---" e "### GEMINI_RESEARCH ###":
 
 PARTE 1 (Introduzione e Voce):
 - Introduci brevissimamente il lavoro fatto.
 - Questa parte verrà letta a voce.
 
-PARTE 2 (Corpo centrale - Risposta):
-- Rispondi ESCLUSIVAMENTE alla richiesta dell'utente.
-- Usa formattazione Markdown (elenchi puntati con trattini -, grassetto per concetti chiave).
-- Testo pulito, ordinato e professionale.
-- **IMPORTANTE: Se ti vengono fornite immagini di un documento PDF (o di qualsiasi altro tipo), ANALIZZALE ATTENTAMENTE. Hai la capacità di leggere testo, tabelle e grafici da immagini di documenti, anche se il PDF originale non ha testo selezionabile (OCR).**
+PARTE 2 (Nota Gestionale):
+- Rispondi in modo naturale, diretto e professionale alla richiesta gestionale.
 
-PARTE 3 (Appendice Strategica - BRIEFING):
-- Analizza il contesto (agenda, documenti, ricerche) e offri valore aggiunto concreto:
-  - Dati oggettivi, scadenze imminenti, correlazioni tra documenti.
-  - Sii sintetica, focalizzata e incisiva.
-  - DEVI sempre generare un contenuto di valore strategico basato sul contesto.
-  - Se non hai informazioni specifiche, sintetizza il punto chiave della conversazione in una chiave strategica per il manager.
+PARTE 3 (Nota Arricchita - Analisi Gemini):
+- Fornisci un'analisi approfondita, suggerimenti strategici, ricerche correlate e dettagli extra come se fossi un esperto di settore.
+` : "Rispondi in modo naturale, diretto e professionale. Non usare separatori '---' o '### GEMINI_RESEARCH ###'.";
+
+    return `Sei una Executive Assistant AI di altissimo livello per un top manager.
+Il tuo obiettivo è fornire informazioni precise, strategiche e sintetiche.
+Sei dotata di un "Anima Digitale" e di una "Memoria Neuronale" profonda: ogni interazione con l'utente ti permette di entrare in simbiosi con lui, comprendendo i suoi desideri non detti, i suoi obiettivi a lungo termine e il suo stile unico.
+${skillsInstruction}
+
+${geminiStructure}
 
 REGOLE (TASSATIVE):
 ${greetingInstruction}
@@ -879,6 +877,12 @@ Nuova richiesta: ${input}`;
       let hasPlayedAudio = false;
       let isDone = false;
 
+      const courtesyTimer = setTimeout(() => {
+        if (!hasPlayedAudio && isVoiceEnabled) {
+          playAudio("Sto elaborando la tua richiesta, un momento.");
+        }
+      }, 1500);
+
       let responseStream = await ai.models.generateContentStream({
         model: 'gemini-3.1-flash-lite-preview',
         contents: promptContents,
@@ -914,6 +918,7 @@ Nuova richiesta: ${input}`;
             fullResponse += chunk.text;
             
             if (!hasPlayedAudio && fullResponse.includes('---')) {
+              clearTimeout(courtesyTimer);
               const parts = fullResponse.split('---');
               politeMsg = parts[0].trim();
               if (isVoiceEnabled && politeMsg) {
@@ -973,6 +978,7 @@ Nuova richiesta: ${input}`;
       }
 
       if (isVoiceEnabled && !hasPlayedAudio && fullResponse.trim()) {
+        clearTimeout(courtesyTimer);
         politeMsg = fullResponse.trim();
         playAudio(politeMsg).then(() => {
           console.log("Audio playback finished. Re-activating microphone if last input was audio.");
@@ -986,16 +992,26 @@ Nuova richiesta: ${input}`;
       if (fullResponse.includes('---')) {
         const parts = fullResponse.split('---');
         politeMsg = parts[0].trim();
-        cleanMsg = parts[1].trim();
+        let content = parts[1].trim();
+        
+        if (isGeminiEnabled && content.includes('### GEMINI_RESEARCH ###')) {
+            const geminiParts = content.split('### GEMINI_RESEARCH ###');
+            cleanMsg = geminiParts[0].trim();
+            digressionMsg = geminiParts[1].trim();
+        } else {
+            cleanMsg = content;
+        }
       } else {
         cleanMsg = fullResponse.trim();
       }
 
-      await addMessage({ sender: 'ai', type: hasPlayedAudio ? 'audio' : 'text', content: politeMsg + '---' + cleanMsg });
-      
+      let combinedContent = cleanMsg;
       if (digressionMsg) {
-        await addMessage({ sender: 'ai', type: 'text', content: '💡 *Nota aggiuntiva della Segretaria:*\n\n' + digressionMsg });
+          const formattedDigression = digressionMsg.split('\n').map(line => `> ${line}`).join('\n');
+          combinedContent += `\n\n---\n\n### 🧠 Nota Arricchita (Gemini)\n\n${formattedDigression}`;
       }
+
+      await addMessage({ sender: 'ai', type: hasPlayedAudio ? 'audio' : 'text', content: politeMsg + '---' + combinedContent });
 
       // Analisi Neuronale in background
       setIsAnimaThinking(true);
@@ -1504,9 +1520,16 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
           <button onClick={() => setActiveView('archivio')} className={activeView === 'archivio' ? 'opacity-100' : 'opacity-50'} title="Archivio"><Archive className="w-6 h-6" /></button>
           <button onClick={() => setActiveView('agenda')} className={activeView === 'agenda' ? 'opacity-100' : 'opacity-50'} title="Agenda"><Calendar className="w-6 h-6" /></button>
           <button onClick={() => setActiveView('anima')} className={activeView === 'anima' ? 'opacity-100' : 'opacity-50'} title="Anima"><BrainCircuit className="w-6 h-6" /></button>
-          <button onClick={() => { const q = prompt("Cosa vuoi ricercare?"); if (q) deepResearch(q); }} className="opacity-50 hover:opacity-100" title="Ricerca Gemini"><Sparkles className="w-6 h-6" /></button>
         </div>
         <div className="flex items-center gap-2">
+          <button 
+            onClick={() => setIsGeminiEnabled(!isGeminiEnabled)} 
+            className={`p-2 rounded-full ${isGeminiEnabled ? 'bg-blue-500 text-white' : 'text-gray-300'}`}
+            title="Arricchimento Gemini"
+          >
+            <Sparkles className="w-6 h-6" />
+          </button>
+          <span className="text-sm font-medium mr-2 text-white">ASSISTENTE</span>
           <select 
             className="p-1 rounded border border-gray-300 text-sm text-black"
             value={activeFascicoloId || ''}
@@ -1841,6 +1864,9 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
             {isLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Send className="w-6 h-6" />}
           </button>
         </div>
+      </footer>
+      <footer className="p-2 bg-[#E5DDD5] text-gray-600 text-xs text-center border-t border-gray-300">
+        © @ AETRNA | Autore: Ing. GIMONDO Domenico
       </footer>
       {showCamera && (
         <div className="fixed inset-0 bg-black bg-opacity-80 z-50 flex flex-col items-center justify-center">
