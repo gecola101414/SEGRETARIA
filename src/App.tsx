@@ -277,17 +277,17 @@ export default function App() {
       : "";
 
     const geminiStructure = isGeminiEnabled ? `
-Analizza l'input e rispondi in tre parti separate da "---" e "### GEMINI_RESEARCH ###":
+IMPORTANTE: Devi strutturare la tua risposta ESATTAMENTE in questo formato, usando i separatori indicati:
 
-PARTE 1 (Introduzione e Voce):
-- Introduci brevissimamente il lavoro fatto.
-- Questa parte verrà letta a voce.
+[INTRODUZIONE BREVE]
+---
+[RISPOSTA GESTIONALE]
+### GEMINI_RESEARCH ###
+[ANALISI APPROFONDITA E STRATEGICA]
 
-PARTE 2 (Nota Gestionale):
-- Rispondi in modo naturale, diretto e professionale alla richiesta gestionale.
-
-PARTE 3 (Nota Arricchita - Analisi Gemini):
-- Fornisci un'analisi approfondita, suggerimenti strategici, ricerche correlate e dettagli extra come se fossi un esperto di settore.
+PARTE 1 (Introduzione): Brevissima (max 2 frasi), sarà letta a voce. Deve essere separata dalla Parte 2 con "---".
+PARTE 2 (Gestionale): Risposta diretta e professionale alla richiesta. Deve essere separata dalla Parte 3 con "### GEMINI_RESEARCH ###".
+PARTE 3 (Arricchita): Analisi esperta, suggerimenti strategici, ricerche correlate e dettagli extra.
 ` : "Rispondi in modo naturale, diretto e professionale. Non usare separatori '---' o '### GEMINI_RESEARCH ###'.";
 
     return `Sei una Executive Assistant AI di altissimo livello per un top manager.
@@ -992,16 +992,22 @@ Nuova richiesta: ${input}`;
       if (fullResponse.includes('---')) {
         const parts = fullResponse.split('---');
         politeMsg = parts[0].trim();
-        let content = parts[1].trim();
+        let content = parts.slice(1).join('---').trim();
         
-        if (isGeminiEnabled && content.includes('### GEMINI_RESEARCH ###')) {
+        if (content.includes('### GEMINI_RESEARCH ###')) {
             const geminiParts = content.split('### GEMINI_RESEARCH ###');
             cleanMsg = geminiParts[0].trim();
             digressionMsg = geminiParts[1].trim();
         } else {
             cleanMsg = content;
         }
+      } else if (fullResponse.includes('### GEMINI_RESEARCH ###')) {
+        const geminiParts = fullResponse.split('### GEMINI_RESEARCH ###');
+        politeMsg = "Ecco quanto elaborato:";
+        cleanMsg = geminiParts[0].trim();
+        digressionMsg = geminiParts[1].trim();
       } else {
+        politeMsg = isGeminiEnabled ? "Ho elaborato una nota per te:" : "";
         cleanMsg = fullResponse.trim();
       }
 
@@ -1011,7 +1017,8 @@ Nuova richiesta: ${input}`;
           combinedContent += `\n\n---\n\n### 🧠 Nota Arricchita (Gemini)\n\n${formattedDigression}`;
       }
 
-      await addMessage({ sender: 'ai', type: hasPlayedAudio ? 'audio' : 'text', content: politeMsg + '---' + combinedContent });
+      const finalPoliteMsg = politeMsg || (isGeminiEnabled ? "Ecco l'analisi richiesta:" : "Certamente:");
+      await addMessage({ sender: 'ai', type: hasPlayedAudio ? 'audio' : 'text', content: finalPoliteMsg + '---' + combinedContent });
 
       // Analisi Neuronale in background
       setIsAnimaThinking(true);
