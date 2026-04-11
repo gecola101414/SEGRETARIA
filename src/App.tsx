@@ -6,6 +6,7 @@ import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import { pipeline } from '@xenova/transformers';
 import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy, Download, Volume2, Camera, X, MessageSquare, Archive, Calendar, Trash2, BrainCircuit, Sparkles } from 'lucide-react';
+import ChatInput from './components/ChatInput';
 import WorkDriveArchive from './components/WorkDriveArchive';
 import AgendaCalendar from './components/AgendaCalendar';
 import { motion, AnimatePresence } from 'motion/react';
@@ -1206,14 +1207,12 @@ Nuova richiesta: ${input}`;
     }
   };
 
-  const handleSend = () => {
+  const handleSend = (text: string) => {
     isIntentionallyStoppedRef.current = true;
     handleManualStop();
-    if (query.trim()) {
-      const textToSend = query;
+    if (text.trim()) {
       latestTranscriptRef.current = '';
-      setQuery('');
-      processInput(textToSend, 'text');
+      processInput(text, 'text');
     }
   };
 
@@ -1881,23 +1880,11 @@ ${text.substring(0, 15000)}`,
           </button>
           <input type="file" ref={fileInputRef} className="hidden" accept=".txt,.docx,.pdf,.xlsx,.xls" onChange={handleFileUpload} />
           
-          <button className="p-2 text-gray-500 cursor-pointer" onClick={startCamera}>
-            <Camera className="w-6 h-6" />
-          </button>
-          
-          <input
-            className="flex-grow p-2 rounded-full border border-gray-300"
-            placeholder="Scrivi un messaggio..."
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-            }}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+          <ChatInput 
+            onSend={handleSend} 
+            isLoading={isLoading} 
+            startCamera={startCamera} 
           />
-          
-          <button className="p-2 bg-[#075E54] text-white rounded-full cursor-pointer" onClick={handleSend} disabled={isLoading}>
-            {isLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Send className="w-6 h-6" />}
-          </button>
         </div>
       </footer>
       <footer className="p-2 bg-[#E5DDD5] text-gray-600 text-xs text-center border-t border-gray-300">
