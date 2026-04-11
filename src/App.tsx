@@ -448,11 +448,13 @@ ${greetingInstruction}
 
   const confirmCreateFascicolo = async () => {
     if (newFascicoloName) {
+      console.log(`Creating fascicolo: name=${newFascicoloName}, parentId=${newFascicoloModal.parentId}`);
       const id = await db.fascicoli.add({ 
         name: newFascicoloName, 
         parentId: newFascicoloModal.parentId || undefined, 
         createdAt: new Date() 
       });
+      console.log(`Fascicolo created with ID: ${id}`);
       await fetchFascicoli();
       if (!newFascicoloModal.parentId) setActiveFascicoloId(id);
       setNewFascicoloModal({ show: false, parentId: null });
@@ -1259,32 +1261,33 @@ Nuova richiesta: ${input}`;
     try {
       const response = await ai.models.generateContent({
         model: "gemini-1.5-flash",
-        contents: `Analizza in modo professionale e approfondito il seguente documento. 
-Estrai le informazioni chiave e crea una sintesi strutturata che permetta di comprendere il contenuto, il tono e le azioni richieste senza dover leggere l'originale.
-La sintesi deve essere fluida e adatta anche ad essere letta a voce.
+        contents: `Sei un estrattore di dati contabili. Il tuo compito è ESTRARRE dati da preventivi tecnici.
+        
+        REGOLE RIGIDE:
+        1. Estrai ESATTAMENTE i valori numerici e le descrizioni dal testo fornito.
+        2. NON inventare nulla. Se un dato non è presente, scrivi "NON TROVATO".
+        3. VERIFICA: Somma i valori estratti e confrontali con il totale del documento. Se non coincidono, segnalalo nel campo "note".
+        4. Output: SOLO JSON.
 
-Struttura richiesta (JSON):
-{
-  "summary": "Sintesi dettagliata e professionale (minimo 3-4 paragrafi)",
-  "entities": ["nomi, società, luoghi chiave"],
-  "dates": ["scadenze e date importanti"],
-  "actionItems": ["cosa bisogna fare concretamente"],
-  "category": "Categoria specifica (es. Contratti, Fatture, Report, Legale)"
-}
+        Struttura richiesta (JSON):
+        {
+          "voci": [{"id": "string", "descrizione": "string", "importo": number}],
+          "totale_calcolato": number,
+          "totale_documento": number,
+          "note": "string"
+        }
 
-Documento:
-${text.substring(0, 15000)}`,
+        Documento:
+        ${text.substring(0, 20000)}`,
         config: {
           responseMimeType: "application/json",
         },
       });
       
-      const result = JSON.parse(response.text || '{}');
-      result.content = text;
-      return JSON.stringify(result);
+      return response.text || '{}';
     } catch (e) {
       console.error("Errore analisi documento:", e);
-      return JSON.stringify({ summary: "Errore nell'analisi del documento.", content: text });
+      return JSON.stringify({ note: "Errore nell'analisi del documento." });
     }
   };
 

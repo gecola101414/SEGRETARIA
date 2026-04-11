@@ -100,8 +100,7 @@ export default function WorkDriveArchive({
     const isExpanded = expandedFascicoli.has(f.id!);
     const isSub = level > 0;
     
-    // Limit to 3 levels
-    if (level > 2) return null;
+    // No level limit
 
     const getFolderIcon = (lvl: number, isActive: boolean) => {
       if (lvl === 0) return isActive ? <FolderOpen className="w-5 h-5 text-blue-700 fill-blue-200" /> : <Folder className="w-5 h-5 text-blue-500" />;
