@@ -8,6 +8,7 @@ import { pipeline } from '@xenova/transformers';
 import { Mic, MicOff, Upload, Send, Loader2, Share2, FileText, Copy, Download, Volume2, Camera, X, MessageSquare, Archive, Calendar, Trash2, BrainCircuit, Sparkles } from 'lucide-react';
 import WorkDriveArchive from './components/WorkDriveArchive';
 import AgendaCalendar from './components/AgendaCalendar';
+import ChatInput from './components/ChatInput';
 import { motion, AnimatePresence } from 'motion/react';
 import jsPDF from 'jspdf';
 import { format, parseISO, isValid } from 'date-fns';
@@ -730,7 +731,9 @@ ${greetingInstruction}
           });
         } else if (call.name === 'createFascicolo') {
           const { name, description, parentId } = call.args;
+          console.log(`Tool createFascicolo called: name=${name}, parentId=${parentId}`);
           const id = await db.fascicoli.add({ name, description: description || '', parentId, createdAt: new Date() });
+          console.log(`Fascicolo created with ID: ${id}`);
           await fetchFascicoli();
           responses.push({
             name: call.name,
@@ -1257,19 +1260,22 @@ Nuova richiesta: ${input}`;
   const analyzeDocument = async (text: string): Promise<string> => {
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Analizza il seguente documento e estrai le informazioni chiave in formato JSON.
-Struttura richiesta:
+        model: "gemini-1.5-flash",
+        contents: `Analizza in modo professionale e approfondito il seguente documento. 
+Estrai le informazioni chiave e crea una sintesi strutturata che permetta di comprendere il contenuto, il tono e le azioni richieste senza dover leggere l'originale.
+La sintesi deve essere fluida e adatta anche ad essere letta a voce.
+
+Struttura richiesta (JSON):
 {
-  "summary": "Sintesi breve del documento",
-  "entities": ["lista di entità chiave"],
-  "dates": ["lista di date rilevanti"],
-  "actionItems": ["lista di azioni da compiere"],
-  "category": "Categoria suggerita"
+  "summary": "Sintesi dettagliata e professionale (minimo 3-4 paragrafi)",
+  "entities": ["nomi, società, luoghi chiave"],
+  "dates": ["scadenze e date importanti"],
+  "actionItems": ["cosa bisogna fare concretamente"],
+  "category": "Categoria specifica (es. Contratti, Fatture, Report, Legale)"
 }
 
 Documento:
-${text.substring(0, 10000)}`, // Limit text to avoid token issues
+${text.substring(0, 15000)}`,
         config: {
           responseMimeType: "application/json",
         },
@@ -1280,7 +1286,7 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
       return JSON.stringify(result);
     } catch (e) {
       console.error("Errore analisi documento:", e);
-      return JSON.stringify({ summary: "Errore nell'analisi", content: text });
+      return JSON.stringify({ summary: "Errore nell'analisi del documento.", content: text });
     }
   };
 
@@ -1457,6 +1463,20 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
   const saveNoteToArchive = async (content: string) => {
     setIsSavingNote(true);
     try {
+        // Generazione Titolo con AI
+        let title = `Nota_${new Date().toISOString().slice(0, 10)}`;
+        try {
+          const titleRes = await ai.models.generateContent({
+            model: "gemini-1.5-flash",
+            contents: `Genera un titolo brevissimo (max 5 parole) e professionale per questa nota: "${content.substring(0, 500)}"`,
+          });
+          if (titleRes.text) {
+            title = titleRes.text.trim().replace(/[^\w\s]/gi, '').replace(/\s+/g, '_');
+          }
+        } catch (e) {
+          console.error("Errore generazione titolo:", e);
+        }
+
         let rootFascicoloId: number;
         if (activeFascicoloId) {
             let currentFascicolo = await db.fascicoli.get(activeFascicoloId);
@@ -1492,7 +1512,7 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
         }
 
         await db.documents.add({
-            fileName: `Nota_${new Date().toISOString().slice(0, 10)}.pdf`,
+            fileName: `${title}.pdf`,
             category: 'Note',
             fascicoloId: noteFascicoloId,
             jsonContent: JSON.stringify({ content }),
@@ -1500,7 +1520,7 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
             fileMimeType: 'application/pdf',
             createdAt: new Date()
         });
-        alert('Nota archiviata nella cartella Note del fascicolo principale.');
+        alert(`Nota archiviata come "${title}" nella cartella Note.`);
     } catch (error) {
         console.error('Error saving note:', error);
         alert('Errore durante il salvataggio della nota.');
@@ -1517,6 +1537,15 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
 
   const shareToWhatsApp = (text: string) => {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+  };
+
+  const getFullNoteContent = (msg: Message) => {
+    if (!msg.content.includes('---')) return msg.content;
+    const parts = msg.content.split('---');
+    // Part 0: Intro (voice), Part 1: Main, Part 2+: Enriched
+    const main = parts[1]?.trim() || "";
+    const enriched = parts.slice(2).join('\n\n---\n\n').trim();
+    return enriched ? `${main}\n\n---\n\n### 🧠 NOTA ARRICCHITA (GEMINI)\n\n${enriched}` : main;
   };
 
   return (
@@ -1613,30 +1642,30 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
                       {/* Pulsanti */}
                       <div className="mt-3 flex gap-4 border-t border-gray-100 pt-2 flex-wrap">
                         <button 
-                          onClick={() => navigator.clipboard.writeText(msg.content.includes('---') ? msg.content.split('---')[1].trim() : msg.content.replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())}
+                          onClick={() => navigator.clipboard.writeText(getFullNoteContent(msg))}
                           className="text-xs text-blue-600 font-bold flex items-center gap-1 cursor-pointer"
-                          title="Copia"
+                          title="Copia nota completa"
                         >
                           <Copy className="w-4 h-4" />
                         </button>
                         <button 
-                          onClick={() => shareToWhatsApp(msg.content.includes('---') ? msg.content.split('---')[1].trim() : msg.content.replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())} 
+                          onClick={() => shareToWhatsApp(getFullNoteContent(msg))} 
                           className="text-xs text-green-600 font-bold flex items-center gap-1 cursor-pointer"
-                          title="Condividi"
+                          title="Condividi nota completa"
                         >
                           <Share2 className="w-4 h-4" />
                         </button>
                         <button 
-                          onClick={() => generatePDF(msg.content.includes('---') ? msg.content.split('---')[1].trim() : msg.content.replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())} 
+                          onClick={() => generatePDF(getFullNoteContent(msg))} 
                           className="text-xs text-red-600 font-bold flex items-center gap-1 cursor-pointer"
-                          title="Scarica PDF"
+                          title="Scarica PDF completo"
                         >
                           <FileText className="w-4 h-4" />
                         </button>
                         <button 
-                          onClick={() => saveNoteToArchive(msg.content.includes('---') ? msg.content.split('---')[1].trim() : msg.content.replace(/Messaggio pronto per WhatsApp/g, '').replace(/^-+/, '').trim())} 
+                          onClick={() => saveNoteToArchive(getFullNoteContent(msg))} 
                           className="text-xs text-purple-600 font-bold flex items-center gap-1 cursor-pointer"
-                          title="Archivia PDF"
+                          title="Archivia PDF completo"
                           disabled={isSavingNote}
                         >
                           {isSavingNote ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
@@ -1853,23 +1882,13 @@ ${text.substring(0, 10000)}`, // Limit text to avoid token issues
           </button>
           <input type="file" ref={fileInputRef} className="hidden" accept=".txt,.docx,.pdf,.xlsx,.xls" onChange={handleFileUpload} />
           
-          <button className="p-2 text-gray-500 cursor-pointer" onClick={startCamera}>
-            <Camera className="w-6 h-6" />
-          </button>
-          
-          <input
-            className="flex-grow p-2 rounded-full border border-gray-300"
-            placeholder="Scrivi un messaggio..."
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-            }}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+          <ChatInput 
+            query={query} 
+            setQuery={setQuery} 
+            handleSend={handleSend} 
+            isLoading={isLoading} 
+            startCamera={startCamera} 
           />
-          
-          <button className="p-2 bg-[#075E54] text-white rounded-full cursor-pointer" onClick={handleSend} disabled={isLoading}>
-            {isLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Send className="w-6 h-6" />}
-          </button>
         </div>
       </footer>
       <footer className="p-2 bg-[#E5DDD5] text-gray-600 text-xs text-center border-t border-gray-300">
