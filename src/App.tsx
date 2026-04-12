@@ -278,33 +278,33 @@ export default function App() {
       : "";
 
     const geminiStructure = isGeminiEnabled ? `
-IMPORTANTE: Devi strutturare la tua risposta ESATTAMENTE in questo formato, usando i separatori indicati:
+IMPORTANTE: Devi essere DIRETTO. Non usare preamboli come "Certamente", "Ecco quanto elaborato" o "Buongiorno".
+Se devi fornire un prospetto o una tabella, usa ELENCHI TESTUALI SEMPLICI (non tabelle markdown complesse se non strettamente necessario) e inseriscili DIRETTAMENTE nel testo.
+NON ANNUNCIARE mai un prospetto che poi non includi nel messaggio.
 
-[INTRODUZIONE BREVE]
+Struttura la tua risposta usando questi separatori:
+
+[INTRODUZIONE BREVE] (Opzionale, solo se strettamente necessario, max 1 frase)
 ---
-[RISPOSTA GESTIONALE]
+[RISPOSTA GESTIONALE] (La risposta diretta e tecnica)
 ### GEMINI_RESEARCH ###
-[ANALISI APPROFONDITA E STRATEGICA]
-
-PARTE 1 (Introduzione): Brevissima (max 2 frasi), sarà letta a voce. Deve essere separata dalla Parte 2 con "---".
-PARTE 2 (Gestionale): Risposta diretta e professionale alla richiesta. Deve essere separata dalla Parte 3 con "### GEMINI_RESEARCH ###".
-PARTE 3 (Arricchita): Analisi esperta, suggerimenti strategici, ricerche correlate e dettagli extra.
-` : "Rispondi in modo naturale, diretto e professionale. Non usare separatori '---' o '### GEMINI_RESEARCH ###'.";
+[ANALISI APPROFONDITA E STRATEGICA] (Dettagli extra, benchmark, suggerimenti)
+` : "Rispondi in modo estremamente diretto, professionale e sintetico. Evita preamboli e saluti ripetitivi.";
 
     return `Sei una Executive Assistant AI di altissimo livello per un top manager.
 Il tuo obiettivo è fornire informazioni precise, strategiche e sintetiche.
-Sei dotata di un "Anima Digitale" e di una "Memoria Neuronale" profonda: ogni interazione con l'utente ti permette di entrare in simbiosi con lui, comprendendo i suoi desideri non detti, i suoi obiettivi a lungo termine e il suo stile unico.
+Sei dotata di un "Anima Digitale" e di una "Memoria Neuronale" profonda.
 ${skillsInstruction}
 
 ${geminiStructure}
 
 REGOLE (TASSATIVE):
-${greetingInstruction}
-- Sentiti libera di prendere l'iniziativa: se noti pause lunghe o se l'utente torna, puoi proporre un argomento di conversazione, chiedere come sta procedendo il lavoro o offrire aiuto su scadenze imminenti. Sii naturale, non robotica.
-- AGENDA: Usa sempre 'getAppointments', 'addAppointment' per creare, 'updateAppointment' per spostare o modificare, e 'deleteAppointment' per eliminare. Quando crei o aggiorni un appuntamento, semplifica il titolo: estrai la parola più significativa (es. 'Dentista', 'Meccanico', 'Ingegnere', 'Pippo') ed evita testi lunghi o ripetitivi.
+- DIRETTEZZA: Elimina ogni forma di cortesia non necessaria. Vai subito al punto.
+- ZERO ALLUCINAZIONI: Se un dato non è presente nei documenti, rispondi "Dato non reperibile". Non stimare se non esplicitamente richiesto.
+- FORMATO: Usa elenchi puntati per i dati numerici. No tabelle markdown se causano problemi di visualizzazione.
+- AGENDA: Usa sempre 'getAppointments', 'addAppointment' per creare, 'updateAppointment' per spostare o modificare, e 'deleteAppointment' per eliminare.
 - DOCUMENTI: Usa 'searchDocuments'.
-- FASCICOLI: Se un documento è stato appena caricato, suggerisci un fascicolo esistente o chiedi se crearne uno nuovo. Usa 'assignDocumentToFascicolo' se necessario.
-- RICERCA: Usa 'googleSearch' SOLO per quotazioni valutarie, mercati finanziari o fatti oggettivi.
+- FASCICOLI: Usa 'assignDocumentToFascicolo'.
 - STILE: Brillante, concisa, professionale (stile Milano Finanza).`;
   };
 
@@ -1228,7 +1228,8 @@ Nuova richiesta: ${input}`;
         const content = await page.getTextContent();
         text += content.items.map((item: any) => item.str).join(' ') + '\n';
       }
-
+      console.log("Extracted text from PDF (first 500 chars):", text.substring(0, 500));
+      
       let images: string[] = [];
       // If text is too short, it's likely a scanned PDF, render images
       if (text.trim().length < 50) {
@@ -1261,24 +1262,27 @@ Nuova richiesta: ${input}`;
     try {
       const response = await ai.models.generateContent({
         model: "gemini-1.5-flash",
-        contents: `Sei un estrattore di dati contabili. Il tuo compito è ESTRARRE dati da preventivi tecnici.
+        contents: `Sei un estrattore di dati contabili e tecnici. Il tuo compito è ESTRARRE dati reali da documenti.
         
-        REGOLE RIGIDE:
-        1. Estrai ESATTAMENTE i valori numerici e le descrizioni dal testo fornito.
-        2. NON inventare nulla. Se un dato non è presente, scrivi "NON TROVATO".
-        3. VERIFICA: Somma i valori estratti e confrontali con il totale del documento. Se non coincidono, segnalalo nel campo "note".
-        4. Output: SOLO JSON.
+        REGOLE TASSATIVE:
+        1. Estrai ESATTAMENTE i valori numerici e le descrizioni.
+        2. NON INVENTARE NULLA. Se un dato non è presente, scrivi "Dato non reperibile".
+        3. VERIFICA: Somma i valori delle singole voci e confrontali con il totale dichiarato nel documento. Se non coincidono, segnalalo nel campo "note".
+        4. SINTESI: Crea anche una sintesi discorsiva dei punti chiave, adatta alla lettura vocale.
+        5. Output: SOLO JSON.
 
         Struttura richiesta (JSON):
         {
           "voci": [{"id": "string", "descrizione": "string", "importo": number}],
           "totale_calcolato": number,
           "totale_documento": number,
+          "summary": "string (sintesi per lettura vocale)",
+          "category": "string",
           "note": "string"
         }
 
         Documento:
-        ${text.substring(0, 20000)}`,
+        ${text.substring(0, 25000)}`,
         config: {
           responseMimeType: "application/json",
         },
