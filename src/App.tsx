@@ -169,7 +169,7 @@ const createFascicoloTool: FunctionDeclaration = {
   }
 };
 
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.1.3";
 
 export default function App() {
   const ai = React.useMemo(() => {
@@ -669,8 +669,11 @@ REGOLE (TASSATIVE):
               if (!parsed) return null;
               
               const searchableText = [
+                d.fileName,
                 parsed.content || '',
                 parsed.summary || '',
+                parsed.note || '',
+                JSON.stringify(parsed.data || {}),
                 (parsed.entities || []).join(' '),
                 (parsed.actionItems || []).join(' ')
               ].join(' ').toLowerCase();
@@ -827,6 +830,31 @@ Fornisci un report dettagliato, strutturato e strategico.`,
     setIsLoading(true);
     setQuery('');
     latestTranscriptRef.current = '';
+
+    // AUTO-INDICIZZAZIONE se è un file nuovo (es. da camera o allegato chat diretto)
+    if (type === 'file' && fileData && passToGemini) {
+      try {
+        console.log("Auto-indexing file from chat/camera:", fileData.name);
+        const structuredContent = await analyzeDocument('', { data: fileData.data, mimeType: fileData.mimeType, name: fileData.name });
+        const analysis = JSON.parse(structuredContent);
+        const summary = analysis.summary || analysis.note || "Documento analizzato correttamente.";
+        
+        await db.documents.add({
+          fileName: fileData.name,
+          category: analysis.category || 'Chat/Camera',
+          fascicoloId: activeFascicoloId || undefined,
+          jsonContent: structuredContent,
+          summary: summary,
+          originalFileBase64: fileData.data,
+          fileMimeType: fileData.mimeType,
+          createdAt: new Date()
+        });
+        if (activeFascicoloId) fetchFascicoloDocuments(activeFascicoloId);
+        console.log("Auto-indexing complete.");
+      } catch (e) {
+        console.error("Errore auto-indicizzazione:", e);
+      }
+    }
 
     try {
       // 0. Memoria Neuronale Profonda (Simbiosi)
@@ -1282,11 +1310,13 @@ Nuova richiesta: ${input}`;
     if (activeFascicoloId) fetchFascicoloDocuments(activeFascicoloId);
   };
 
-  const analyzeDocument = async (text: string, fileData?: { data: string, mimeType: string }): Promise<string> => {
+  const analyzeDocument = async (text: string, fileData?: { data: string, mimeType: string, name?: string }): Promise<string> => {
     try {
       const contents: any[] = [
         {
           text: `Sei un Master Dissector AI. Il tuo compito è SVISCERARE il documento fornito ed estrarne i contenuti essenziali con precisione chirurgica.
+        
+        NOME FILE: ${fileData?.name || 'Sconosciuto'}
         
         REGOLE TASSATIVE:
         1. Se è un documento CONTABILE/TECNICO: Estrai voci, ID, descrizioni e importi esatti. Verifica i calcoli matematici.
