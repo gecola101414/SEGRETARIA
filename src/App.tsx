@@ -169,7 +169,7 @@ const createFascicoloTool: FunctionDeclaration = {
   }
 };
 
-const APP_VERSION = "1.1.3";
+const APP_VERSION = "1.1.5";
 
 export default function App() {
   const ai = React.useMemo(() => {
@@ -783,7 +783,7 @@ REGOLE (TASSATIVE):
     setIsLoading(true);
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite-preview",
+        model: "gemini-1.5-flash",
         contents: `Esegui una ricerca completa e approfondita su: "${query}".
 Fornisci un report dettagliato, strutturato e strategico.`,
         config: {
@@ -821,7 +821,9 @@ Fornisci un report dettagliato, strutturato e strategico.`,
     const userMsgId = await addMessage({ 
       sender: 'user', 
       type, 
-      content: type === 'file' && fileData ? `File allegato: ${fileData.name}` : input, 
+      content: type === 'file' && fileData 
+        ? `File allegato: ${fileData.name}${input.includes('[SVISCERAMENTO') ? '\n\n' + input : ''}` 
+        : input, 
       metadata,
       fileData: fileData?.data,
       fileMimeType: fileData?.mimeType,
@@ -854,6 +856,12 @@ Fornisci un report dettagliato, strutturato e strategico.`,
       } catch (e) {
         console.error("Errore auto-indicizzazione:", e);
       }
+    }
+
+    // Se passToGemini è false, abbiamo già finito (es. caricamento file con svisceramento già fatto)
+    if (!passToGemini) {
+      setIsLoading(false);
+      return;
     }
 
     try {
@@ -931,7 +939,7 @@ Nuova richiesta: ${input}`;
       }, 1500);
 
       let responseStream = await ai.models.generateContentStream({
-        model: 'gemini-3.1-flash-lite-preview',
+        model: 'gemini-1.5-flash',
         contents: promptContents,
         config: {
           systemInstruction,
@@ -1007,7 +1015,7 @@ Nuova richiesta: ${input}`;
           promptContents.push(assistantContent, userContent);
 
           responseStream = await ai.models.generateContentStream({
-            model: 'gemini-3.1-flash-lite-preview',
+            model: 'gemini-1.5-flash',
             contents: promptContents,
             config: {
               systemInstruction,
@@ -1102,9 +1110,10 @@ Nuova richiesta: ${input}`;
       }
       setTimeout(() => setIsAnimaThinking(false), 2000);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error("Errore elaborazione:", error);
-      await addMessage({ sender: 'ai', type: 'text', content: '⚠️ Si è verificato un errore. Riprova.' });
+      const msg = error?.message || String(error);
+      await addMessage({ sender: 'ai', type: 'text', content: `⚠️ Errore: ${msg.substring(0, 100)}. Riprova.` });
     } finally {
       setIsLoading(false);
     }

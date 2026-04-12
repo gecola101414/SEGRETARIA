@@ -8,7 +8,7 @@ const ai = new GoogleGenAI({ apiKey: apiKey || 'MISSING_KEY' });
 export const analyzeNeuronalContext = async (messageContent: string, messageId: number) => {
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash",
       contents: `Analizza il seguente messaggio dell'utente e spacchettalo in "pacchetti neuronali" di conoscenza. 
 Estrai fatti, preferenze, entità menzionate, contesto emotivo, obiettivi, relazioni o abilità apprese (learned_skill).
 Sii estremamente analitico e "geloso" di queste informazioni, come se stessi costruendo l'anima e la memoria profonda del tuo assistito.
@@ -67,7 +67,7 @@ export const evolveAnima = async () => {
     if (allPackets.length < 5) return null;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash",
       contents: `Sei l'Anima di Smart Secretary Pro22. Il tuo compito è EVOLVERE.
 Analizza i seguenti pacchetti di conoscenza estratti dalle interazioni passate e crea una NUOVA CONNESSIONE NEURONALE (learned_skill) che sintetizzi un nuovo comportamento, una procedura ottimizzata o un'intuizione profonda sul tuo assistito.
 Questa connessione deve essere "itinerante" e "simbiotica", adattandosi alle reali esigenze dell'utente.
