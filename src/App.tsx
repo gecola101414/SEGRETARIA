@@ -169,7 +169,7 @@ const createFascicoloTool: FunctionDeclaration = {
   }
 };
 
-const APP_VERSION = "1.0.6";
+const APP_VERSION = "1.0.8";
 
 export default function App() {
   const ai = React.useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! }), []);
@@ -1275,31 +1275,39 @@ Nuova richiesta: ${input}`;
     if (activeFascicoloId) fetchFascicoloDocuments(activeFascicoloId);
   };
 
-  const analyzeDocument = async (text: string): Promise<string> => {
+  const analyzeDocument = async (text: string, fileData?: { data: string, mimeType: string }): Promise<string> => {
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: `Sei un estrattore di dati contabili e tecnici. Il tuo compito è ESTRARRE dati reali da documenti.
+      const contents: any[] = [
+        {
+          text: `Sei un Master Dissector AI. Il tuo compito è SVISCERARE il documento fornito ed estrarne i contenuti essenziali con precisione chirurgica.
         
         REGOLE TASSATIVE:
-        1. Estrai ESATTAMENTE i valori numerici e le descrizioni.
-        2. NON INVENTARE NULLA. Se un dato non è presente, scrivi "Dato non reperibile".
-        3. VERIFICA: Somma i valori delle singole voci e confrontali con il totale dichiarato nel documento. Se non coincidono, segnalalo nel campo "note".
-        4. SINTESI: Crea anche una sintesi discorsiva dei punti chiave, adatta alla lettura vocale.
-        5. Output: SOLO JSON.
-
-        Struttura richiesta (JSON):
-        {
-          "voci": [{"id": "string", "descrizione": "string", "importo": number}],
-          "totale_calcolato": number,
-          "totale_documento": number,
-          "summary": "string (sintesi per lettura vocale)",
-          "category": "string",
-          "note": "string"
+        1. Se è un documento CONTABILE/TECNICO: Estrai voci, ID, descrizioni e importi esatti. Verifica i calcoli matematici.
+        2. Se è una COMUNICAZIONE (Email/Lettera/Foto di schermo): Estrai mittente, destinatario, oggetto, richieste principali, scadenze e toni.
+        3. Se è un'IMMAGINE: Esegui OCR fedele.
+        4. SINTESI: Crea una sintesi "diretta" (stile Milano Finanza) per il manager, evidenziando subito criticità e opportunità.
+        5. ZERO ALLUCINAZIONI: Solo dati reali presenti nel file. Se un dato manca, scrivi "Dato non reperibile".
+        
+        Output: SOLO JSON.`
         }
+      ];
 
-        Documento:
-        ${text.substring(0, 25000)}`,
+      if (fileData) {
+        contents.push({
+          inlineData: {
+            data: fileData.data,
+            mimeType: fileData.mimeType
+          }
+        });
+      }
+
+      if (text) {
+        contents.push({ text: `Testo estratto (se disponibile): ${text.substring(0, 25000)}` });
+      }
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite-preview",
+        contents,
         config: {
           responseMimeType: "application/json",
         },
@@ -1313,12 +1321,8 @@ Nuova richiesta: ${input}`;
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    console.log("handleFileUpload triggered");
     const file = e.target.files?.[0];
-    if (!file) {
-      console.log("No file selected");
-      return;
-    }
+    if (!file) return;
     
     // Reset input to allow selecting the same file again
     e.target.value = '';
@@ -1333,120 +1337,64 @@ Nuova richiesta: ${input}`;
           let extractedText = '';
           let mimeType = file.type;
           
+          // 1. Estrazione testo grezzo (se possibile)
           if (file.name.endsWith('.pdf')) {
             const arrayBuffer = await file.arrayBuffer();
-            const { text, images } = await extractTextFromPDF(arrayBuffer);
+            const { text } = await extractTextFromPDF(arrayBuffer);
             extractedText = text;
             mimeType = 'application/pdf';
-            
-            const structuredContent = await analyzeDocument(extractedText);
-            
-            await db.documents.add({
-              fileName: file.name,
-              category: fileCategory || 'Generale',
-              fascicoloId: activeFascicoloId || undefined,
-              appointmentId: activeAppointmentId || undefined,
-              jsonContent: structuredContent,
-              originalFileBase64: base64,
-              fileMimeType: mimeType,
-              createdAt: new Date()
-            });
-
-            if (images.length > 0) {
-              await processInput(`Analisi visiva del documento PDF: ${file.name}`, 'file', undefined, { data: base64, mimeType, name: file.name }, images);
-            } else {
-              await processInput(`Analisi del documento PDF: ${file.name}`, 'file', undefined, { data: base64, mimeType, name: file.name });
-            }
           } else if (file.name.endsWith('.docx')) {
-            console.log("Processing DOCX");
             const arrayBuffer = await file.arrayBuffer();
             const result = await mammoth.extractRawText({ arrayBuffer });
             extractedText = result.value;
             mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-            
-            const structuredContent = await analyzeDocument(extractedText);
-            
-            await db.documents.add({
-              fileName: file.name,
-              category: fileCategory || 'Generale',
-              fascicoloId: activeFascicoloId || undefined,
-              appointmentId: activeAppointmentId || undefined,
-              jsonContent: structuredContent,
-              originalFileBase64: base64,
-              fileMimeType: mimeType,
-              createdAt: new Date()
-            });
           } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
-            console.log("Processing XLSX");
             const arrayBuffer = await file.arrayBuffer();
             const workbook = XLSX.read(arrayBuffer, { type: 'array' });
             const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
             extractedText = XLSX.utils.sheet_to_csv(firstSheet);
             mimeType = file.name.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/vnd.ms-excel';
-            
-            const structuredContent = await analyzeDocument(extractedText);
-            
-            await db.documents.add({
-              fileName: file.name,
-              category: fileCategory || 'Generale',
-              fascicoloId: activeFascicoloId || undefined,
-              appointmentId: activeAppointmentId || undefined,
-              jsonContent: structuredContent,
-              originalFileBase64: base64,
-              fileMimeType: mimeType,
-              createdAt: new Date()
-            });
           } else if (file.name.endsWith('.txt') || file.name.endsWith('.csv') || file.name.endsWith('.md')) {
-            console.log("Processing Text file");
             extractedText = await file.text();
             mimeType = 'text/plain';
-            
-            const structuredContent = await analyzeDocument(extractedText);
-            
-            await db.documents.add({
-              fileName: file.name,
-              category: fileCategory || 'Generale',
-              fascicoloId: activeFascicoloId || undefined,
-              appointmentId: activeAppointmentId || undefined,
-              jsonContent: structuredContent,
-              originalFileBase64: base64,
-              fileMimeType: mimeType,
-              createdAt: new Date()
-            });
-          } else {
-            console.log("Processing unknown file type");
-            // For other files, we just store them, search will be based on filename
-            extractedText = `File: ${file.name}`;
-            
-            await db.documents.add({
-              fileName: file.name,
-              category: fileCategory || 'Generale',
-              fascicoloId: activeFascicoloId || undefined,
-              appointmentId: activeAppointmentId || undefined,
-              jsonContent: JSON.stringify({ content: extractedText }),
-              originalFileBase64: base64,
-              fileMimeType: mimeType,
-              createdAt: new Date()
-            });
+          } else if (file.type.startsWith('image/')) {
+            mimeType = file.type;
           }
+
+          // 2. SVISCERAMENTO (Analisi Unica e Profonda)
+          console.log("Dissecting file...");
+          const structuredContent = await analyzeDocument(extractedText, { data: base64, mimeType });
+          const analysis = JSON.parse(structuredContent);
           
-          if (activeFascicoloId) {
-            fetchFascicoloDocuments(activeFascicoloId);
-          }
+          // 3. Salvataggio in DB
+          await db.documents.add({
+            fileName: file.name,
+            category: fileCategory || analysis.category || 'Generale',
+            fascicoloId: activeFascicoloId || undefined,
+            appointmentId: activeAppointmentId || undefined,
+            jsonContent: structuredContent,
+            originalFileBase64: base64,
+            fileMimeType: mimeType,
+            createdAt: new Date()
+          });
+
+          // 4. Risposta Immediata in Chat
+          const summary = analysis.summary || analysis.note || "Documento analizzato correttamente.";
+          await processInput(`[SVISCERAMENTO FILE: ${file.name}]\n\n${summary}`, 'file', undefined, { data: base64, mimeType, name: file.name }, undefined, false);
+
+          if (activeFascicoloId) fetchFascicoloDocuments(activeFascicoloId);
           setFileCategory('');
           console.log("File processing complete");
-        } catch (error) {
-          console.error("Errore nel processamento del file:", error);
-          alert("Errore durante il caricamento del file. Riprova.");
+        } catch (err) {
+          console.error("Errore caricamento file:", err);
+          alert("Errore nel caricamento del file. Riprova.");
         } finally {
           setIsLoading(false);
-          console.log("Loading finished");
         }
       };
       reader.readAsDataURL(file);
-      console.log("reader.readAsDataURL called");
     } catch (error) {
-      console.error(error);
+      console.error("Errore lettura file:", error);
       setIsLoading(false);
     }
   };
