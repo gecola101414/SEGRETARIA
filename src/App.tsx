@@ -169,6 +169,8 @@ const createFascicoloTool: FunctionDeclaration = {
   }
 };
 
+const APP_VERSION = "1.0.6";
+
 export default function App() {
   const ai = React.useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! }), []);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -185,6 +187,18 @@ export default function App() {
   const [animaSummary, setAnimaSummary] = useState<string>('');
   const [learnedSkills, setLearnedSkills] = useState<NeuronalPacket[]>([]);
   const [isAnimaThinking, setIsAnimaThinking] = useState(false);
+
+  const handleClearChat = async () => {
+    if (confirm("Vuoi azzerare la chat? Questa operazione non eliminerà i documenti o le note salvate.")) {
+      await db.messages.clear();
+      setMessages([]);
+      await addMessage({ 
+        sender: 'ai', 
+        type: 'text', 
+        content: `Chat azzerata. Sistema pronto per un nuovo task. (Versione ${APP_VERSION})` 
+      });
+    }
+  };
   const [messageCount, setMessageCount] = useState(0);
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [isGeminiEnabled, setIsGeminiEnabled] = useState(false);
@@ -299,9 +313,11 @@ ${skillsInstruction}
 ${geminiStructure}
 
 REGOLE (TASSATIVE):
+- PRIORITÀ CONTESTO: Analizza PRIMA i contenuti del fascicolo attivo indicato nel prompt, POI gli altri fascicoli, e infine le note memorizzate.
 - DIRETTEZZA: Elimina ogni forma di cortesia non necessaria. Vai subito al punto.
 - ZERO ALLUCINAZIONI: Se un dato non è presente nei documenti, rispondi "Dato non reperibile". Non stimare se non esplicitamente richiesto.
 - FORMATO: Usa elenchi puntati per i dati numerici. No tabelle markdown se causano problemi di visualizzazione.
+- STORICO LIMITATO: Lavora solo sulle ultime 10 conversazioni fornite.
 - AGENDA: Usa sempre 'getAppointments', 'addAppointment' per creare, 'updateAppointment' per spostare o modificare, e 'deleteAppointment' per eliminare.
 - DOCUMENTI: Usa 'searchDocuments'.
 - FASCICOLI: Usa 'assignDocumentToFascicolo'.
@@ -812,34 +828,25 @@ Fornisci un report dettagliato, strutturato e strategico.`,
         ? `\n\nMEMORIA NEURONALE PROFONDA (Simbiosi):\n${neuronalContext.map(p => `- [${p.type}] ${p.content}`).join('\n')}`
         : '';
 
-      // 1. Memoria a Breve Termine: ultimi 10 messaggi (velocissimo)
+      // 1. Memoria a Breve Termine: ultimi 10 messaggi (STRETTO)
       const recentMessages = messages.slice(-10);
       const recentContext = recentMessages.map(m => `${m.sender === 'user' ? 'Utente' : 'Segretaria'}: ${m.content}`).join('\n');
 
-      // 2. Memoria a Lungo Termine (Ricerca Intelligente): cerchiamo parole chiave nei messaggi vecchi
-      const keywords = input.toLowerCase().split(/\s+/).filter(w => w.length > 3); // Parole con più di 3 lettere
-      const olderMessages = messages.slice(0, -10);
-      
-      let relevantPast: typeof messages = [];
-      if (keywords.length > 0) {
-        relevantPast = olderMessages.filter(m => 
-          keywords.some(k => m.content.toLowerCase().includes(k))
-        ).slice(-5); // Prendiamo i 5 messaggi vecchi più pertinenti
-      }
-
-      // Costruiamo il prompt intelligente
+      // Costruiamo il prompt intelligente - PRIORITÀ FASCICOLO ATTIVO
       const activeFascicolo = fascicoli.find(f => f.id === activeFascicoloId);
       const activeFascicoloName = activeFascicolo ? activeFascicolo.name : 'Nessun fascicolo attivo';
-      const activeFascicoloDocs = fascicoloDocuments.map(d => d.fileName).join(', ');
+      const activeFascicoloDocs = fascicoloDocuments.map(d => `${d.fileName} (Categoria: ${d.category})`).join(', ');
 
       let initialText = `Oggi è il ${format(new Date(), "dd MMMM yyyy", { locale: it })}.
-Storico recente:\n${recentContext}\n\n`;
-      if (relevantPast.length > 0) {
-        const pastContext = relevantPast.map(m => `[Del ${m.createdAt.toLocaleDateString()}] ${m.sender === 'user' ? 'Utente' : 'Segretaria'}: ${m.content}`).join('\n');
-        initialText += `Memoria storica pertinente a questa richiesta:\n${pastContext}\n\n`;
-      }
-      initialText += `Fascicolo di lavoro attivo: ${activeFascicoloName}
-Documenti presenti nel fascicolo attivo: ${activeFascicoloDocs || 'Nessun documento'}
+VERSIONE SISTEMA: ${APP_VERSION}
+
+PRIORITÀ ASSOLUTA - FASCICOLO DI LAVORO ATTIVO:
+Nome Fascicolo: ${activeFascicoloName}
+Documenti nel Fascicolo: ${activeFascicoloDocs || 'Nessun documento'}
+
+CONTESTO RECENTE (Ultime 10 interazioni):
+${recentContext}
+
 ${neuronalText}
 
 Nuova richiesta: ${input}`;
@@ -1024,6 +1031,16 @@ Nuova richiesta: ${input}`;
 
       const finalPoliteMsg = politeMsg || (isGeminiEnabled ? "Ecco l'analisi richiesta:" : "Certamente:");
       await addMessage({ sender: 'ai', type: hasPlayedAudio ? 'audio' : 'text', content: finalPoliteMsg + '---' + combinedContent });
+
+      // Potatura drastica della chat: mantieni solo gli ultimi 10 messaggi nel DB
+      const allMsgs = await db.messages.orderBy('createdAt').toArray();
+      if (allMsgs.length > 10) {
+        const toDelete = allMsgs.slice(0, allMsgs.length - 10);
+        for (const m of toDelete) {
+          await db.messages.delete(m.id!);
+        }
+        await fetchMessages(); // Rinfresca lo stato locale
+      }
 
       // Analisi Neuronale in background
       setIsAnimaThinking(true);
@@ -1887,6 +1904,14 @@ Nuova richiesta: ${input}`;
           </button>
           <input type="file" ref={fileInputRef} className="hidden" accept=".txt,.docx,.pdf,.xlsx,.xls" onChange={handleFileUpload} />
           
+          <button 
+            className="p-2 text-red-500 cursor-pointer hover:bg-red-50 rounded-full transition-colors" 
+            onClick={handleClearChat}
+            title="Azzera Chat"
+          >
+            <Trash2 className="w-6 h-6" />
+          </button>
+          
           <ChatInput 
             onSend={handleSend} 
             isLoading={isLoading} 
@@ -1895,7 +1920,7 @@ Nuova richiesta: ${input}`;
         </div>
       </footer>
       <footer className="p-2 bg-[#E5DDD5] text-gray-600 text-xs text-center border-t border-gray-300">
-        © @ AETRNA | Autore: Ing. GIMONDO Domenico
+        2026@AETERNA - Ing. GIMONDO Domenico | Versione {APP_VERSION}
       </footer>
       {showCamera && (
         <div className="fixed inset-0 bg-black bg-opacity-80 z-50 flex flex-col items-center justify-center">
