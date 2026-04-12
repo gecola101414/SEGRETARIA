@@ -169,7 +169,7 @@ const createFascicoloTool: FunctionDeclaration = {
   }
 };
 
-const APP_VERSION = "1.1.5";
+const APP_VERSION = "1.1.6";
 
 export default function App() {
   const ai = React.useMemo(() => {
@@ -834,7 +834,8 @@ Fornisci un report dettagliato, strutturato e strategico.`,
     latestTranscriptRef.current = '';
 
     // AUTO-INDICIZZAZIONE se è un file nuovo (es. da camera o allegato chat diretto)
-    if (type === 'file' && fileData && passToGemini) {
+    // Evitiamo di re-indicizzare se il messaggio contiene già lo svisceramento (chiamata da handleFileUpload)
+    if (type === 'file' && fileData && passToGemini && !input.includes('[SVISCERAMENTO')) {
       try {
         console.log("Auto-indexing file from chat/camera:", fileData.name);
         const structuredContent = await analyzeDocument('', { data: fileData.data, mimeType: fileData.mimeType, name: fileData.name });
@@ -1323,18 +1324,18 @@ Nuova richiesta: ${input}`;
     try {
       const contents: any[] = [
         {
-          text: `Sei un Master Dissector AI. Il tuo compito è SVISCERARE il documento fornito ed estrarne i contenuti essenziali con precisione chirurgica.
+          text: `Sei un Master Dissector AI di livello mondiale. Il tuo compito è SVISCERARE il documento fornito ed estrarne ogni singola informazione con precisione assoluta.
         
         NOME FILE: ${fileData?.name || 'Sconosciuto'}
         
         REGOLE TASSATIVE:
-        1. Se è un documento CONTABILE/TECNICO: Estrai voci, ID, descrizioni e importi esatti. Verifica i calcoli matematici.
-        2. Se è una COMUNICAZIONE (Email/Lettera/Foto di schermo): Estrai mittente, destinatario, oggetto, richieste principali, scadenze e toni.
-        3. Se è un'IMMAGINE: Esegui OCR fedele e completo. Estrai ogni parola visibile.
-        4. SINTESI: Crea una sintesi "diretta" (stile Milano Finanza) per il manager, evidenziando subito criticità e opportunità.
-        5. ZERO ALLUCINAZIONI: Solo dati reali presenti nel file. Se un dato manca, scrivi "Dato non reperibile".
+        1. OCR TOTALE: Se il documento è un'immagine o un PDF scansionato, devi leggere OGNI parola. Non saltare nulla. Sii ossessivo nei dettagli.
+        2. ANALISI TECNICA: Estrai date, importi, nomi, codici fiscali, IBAN, scadenze.
+        3. SINTESI STRATEGICA: Crea un riassunto esecutivo (stile Milano Finanza) che evidenzi immediatamente l'azione richiesta.
+        4. CATEGORIZZAZIONE: Identifica correttamente se è una fattura, una mail, un contratto, una multa, ecc.
+        5. ZERO ALLUCINAZIONI: Se un dato è illeggibile, scrivi "Illeggibile". Se manca, "Dato non reperibile".
         
-        Output: SOLO JSON con campi: summary (stringa), category (stringa), note (stringa), data (oggetto con dettagli estratti).`
+        Output: SOLO JSON con campi: summary (stringa), category (stringa), note (stringa), full_content (stringa con tutto il testo estratto), data (oggetto con dettagli strutturati).`
         }
       ];
 
@@ -1342,17 +1343,17 @@ Nuova richiesta: ${input}`;
         contents.push({
           inlineData: {
             data: fileData.data,
-            mimeType: fileData.mimeType
+            mimeType: fileData.mimeType || 'image/jpeg'
           }
         });
       }
 
       if (text) {
-        contents.push({ text: `Testo estratto dai metadati/livello testo: ${text.substring(0, 30000)}` });
+        contents.push({ text: `Testo estratto dai metadati: ${text.substring(0, 30000)}` });
       }
 
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-1.5-pro",
         contents,
         config: {
           responseMimeType: "application/json",
@@ -1435,8 +1436,8 @@ Nuova richiesta: ${input}`;
             createdAt: new Date()
           });
 
-          // 4. Risposta Immediata in Chat
-          await processInput(`[SVISCERAMENTO FILE: ${file.name}]\n\n${summary}`, 'file', undefined, { data: base64, mimeType, name: file.name }, undefined, false);
+          // 4. Risposta Immediata in Chat (passToGemini: true per commento AI)
+          await processInput(`[SVISCERAMENTO FILE: ${file.name}]\n\n${summary}`, 'file', undefined, { data: base64, mimeType, name: file.name }, undefined, true);
 
           if (activeFascicoloId) fetchFascicoloDocuments(activeFascicoloId);
           setFileCategory('');
