@@ -169,7 +169,7 @@ const createFascicoloTool: FunctionDeclaration = {
   }
 };
 
-const APP_VERSION = "1.0.8";
+const APP_VERSION = "1.0.9";
 
 export default function App() {
   const ai = React.useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! }), []);
@@ -1284,11 +1284,11 @@ Nuova richiesta: ${input}`;
         REGOLE TASSATIVE:
         1. Se è un documento CONTABILE/TECNICO: Estrai voci, ID, descrizioni e importi esatti. Verifica i calcoli matematici.
         2. Se è una COMUNICAZIONE (Email/Lettera/Foto di schermo): Estrai mittente, destinatario, oggetto, richieste principali, scadenze e toni.
-        3. Se è un'IMMAGINE: Esegui OCR fedele.
+        3. Se è un'IMMAGINE: Esegui OCR fedele e completo. Estrai ogni parola visibile.
         4. SINTESI: Crea una sintesi "diretta" (stile Milano Finanza) per il manager, evidenziando subito criticità e opportunità.
         5. ZERO ALLUCINAZIONI: Solo dati reali presenti nel file. Se un dato manca, scrivi "Dato non reperibile".
         
-        Output: SOLO JSON.`
+        Output: SOLO JSON con campi: summary (stringa), category (stringa), note (stringa), data (oggetto con dettagli estratti).`
         }
       ];
 
@@ -1302,11 +1302,11 @@ Nuova richiesta: ${input}`;
       }
 
       if (text) {
-        contents.push({ text: `Testo estratto (se disponibile): ${text.substring(0, 25000)}` });
+        contents.push({ text: `Testo estratto dai metadati/livello testo: ${text.substring(0, 30000)}` });
       }
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite-preview",
+        model: "gemini-1.5-flash",
         contents,
         config: {
           responseMimeType: "application/json",
@@ -1316,7 +1316,7 @@ Nuova richiesta: ${input}`;
       return response.text || '{}';
     } catch (e) {
       console.error("Errore analisi documento:", e);
-      return JSON.stringify({ note: "Errore nell'analisi del documento." });
+      return JSON.stringify({ summary: "Errore nell'analisi del documento.", note: "Errore tecnico durante lo svisceramento." });
     }
   };
 
@@ -1367,19 +1367,21 @@ Nuova richiesta: ${input}`;
           const analysis = JSON.parse(structuredContent);
           
           // 3. Salvataggio in DB
+          const summary = analysis.summary || analysis.note || "Documento analizzato correttamente.";
+          
           await db.documents.add({
             fileName: file.name,
             category: fileCategory || analysis.category || 'Generale',
             fascicoloId: activeFascicoloId || undefined,
             appointmentId: activeAppointmentId || undefined,
             jsonContent: structuredContent,
+            summary: summary, // Salvataggio esplicito per il tasto "i"
             originalFileBase64: base64,
             fileMimeType: mimeType,
             createdAt: new Date()
           });
 
           // 4. Risposta Immediata in Chat
-          const summary = analysis.summary || analysis.note || "Documento analizzato correttamente.";
           await processInput(`[SVISCERAMENTO FILE: ${file.name}]\n\n${summary}`, 'file', undefined, { data: base64, mimeType, name: file.name }, undefined, false);
 
           if (activeFascicoloId) fetchFascicoloDocuments(activeFascicoloId);
