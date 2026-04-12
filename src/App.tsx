@@ -169,10 +169,17 @@ const createFascicoloTool: FunctionDeclaration = {
   }
 };
 
-const APP_VERSION = "1.0.9";
+const APP_VERSION = "1.1.0";
 
 export default function App() {
-  const ai = React.useMemo(() => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! }), []);
+  const ai = React.useMemo(() => {
+    // @ts-ignore
+    const key = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+    if (!key) {
+      console.error("ERRORE: GEMINI_API_KEY o VITE_GEMINI_API_KEY non trovata nell'ambiente.");
+    }
+    return new GoogleGenAI({ apiKey: key || 'MISSING_KEY' });
+  }, []);
   const [messages, setMessages] = useState<Message[]>([]);
   const [fascicoli, setFascicoli] = useState<Fascicolo[]>([]);
   const [activeFascicoloId, setActiveFascicoloId] = useState<number | null>(null);
@@ -1313,10 +1320,18 @@ Nuova richiesta: ${input}`;
         },
       });
       
-      return response.text || '{}';
-    } catch (e) {
+      if (!response.text) {
+        throw new Error("Nessuna risposta ricevuta dal modello.");
+      }
+      
+      return response.text;
+    } catch (e: any) {
       console.error("Errore analisi documento:", e);
-      return JSON.stringify({ summary: "Errore nell'analisi del documento.", note: "Errore tecnico durante lo svisceramento." });
+      const errorMessage = e?.message || "Errore sconosciuto";
+      return JSON.stringify({ 
+        summary: "Errore nell'analisi del documento.", 
+        note: `Errore tecnico: ${errorMessage}. Verifica la configurazione della chiave API su Vercel.` 
+      });
     }
   };
 
