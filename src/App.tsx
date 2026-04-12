@@ -169,12 +169,12 @@ const createFascicoloTool: FunctionDeclaration = {
   }
 };
 
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.1";
 
 export default function App() {
   const ai = React.useMemo(() => {
     // @ts-ignore
-    const key = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+    const key = (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined) || import.meta.env.VITE_GEMINI_API_KEY;
     if (!key) {
       console.error("ERRORE: GEMINI_API_KEY o VITE_GEMINI_API_KEY non trovata nell'ambiente.");
     }

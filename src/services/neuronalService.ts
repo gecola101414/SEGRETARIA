@@ -1,7 +1,9 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { db, NeuronalPacket } from "../db/database";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+// @ts-ignore
+const apiKey = (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined) || import.meta.env.VITE_GEMINI_API_KEY;
+const ai = new GoogleGenAI({ apiKey: apiKey || 'MISSING_KEY' });
 
 export const analyzeNeuronalContext = async (messageContent: string, messageId: number) => {
   try {
