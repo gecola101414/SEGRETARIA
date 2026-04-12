@@ -2,7 +2,11 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { db, NeuronalPacket } from "../db/database";
 
 // @ts-ignore
-const apiKey = (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined) || import.meta.env.VITE_GEMINI_API_KEY;
+let apiKey = (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined) || import.meta.env.VITE_GEMINI_API_KEY;
+if (apiKey) {
+  apiKey = apiKey.trim();
+  if (apiKey === 'MY_GEMINI_API_KEY' || apiKey === 'MISSING_KEY') apiKey = '';
+}
 const ai = new GoogleGenAI({ apiKey: apiKey || 'MISSING_KEY' });
 
 export const analyzeNeuronalContext = async (messageContent: string, messageId: number) => {

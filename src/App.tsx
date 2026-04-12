@@ -169,14 +169,21 @@ const createFascicoloTool: FunctionDeclaration = {
   }
 };
 
-const APP_VERSION = "1.1.6";
+const APP_VERSION = "1.1.7";
 
 export default function App() {
   const ai = React.useMemo(() => {
     // @ts-ignore
-    const key = (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined) || import.meta.env.VITE_GEMINI_API_KEY;
+    let key = (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined) || import.meta.env.VITE_GEMINI_API_KEY;
+    
+    // Pulizia chiave da eventuali spazi o placeholder
+    if (key) {
+      key = key.trim();
+      if (key === 'MY_GEMINI_API_KEY' || key === 'MISSING_KEY') key = '';
+    }
+
     if (!key) {
-      console.error("ERRORE: GEMINI_API_KEY o VITE_GEMINI_API_KEY non trovata nell'ambiente.");
+      console.error("ERRORE: GEMINI_API_KEY non trovata. Verifica le impostazioni su Vercel o AI Studio.");
     }
     return new GoogleGenAI({ apiKey: key || 'MISSING_KEY' });
   }, []);
