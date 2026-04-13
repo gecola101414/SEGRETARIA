@@ -169,24 +169,34 @@ const createFascicoloTool: FunctionDeclaration = {
   }
 };
 
-const APP_VERSION = "1.1.7";
+const APP_VERSION = "1.2.1";
 
 export default function App() {
   const ai = React.useMemo(() => {
     // @ts-ignore
-    let key = (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined) || import.meta.env.VITE_GEMINI_API_KEY;
+    let key = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
     
-    // Pulizia chiave da eventuali spazi o placeholder
+    // Pulizia chiave
     if (key) {
-      key = key.trim();
-      if (key === 'MY_GEMINI_API_KEY' || key === 'MISSING_KEY') key = '';
+      key = String(key).trim();
+      if (key === 'MY_GEMINI_API_KEY' || key === 'MISSING_KEY' || key === 'undefined' || key === 'null' || key === '') {
+        key = '';
+      }
     }
 
     if (!key) {
-      console.error("ERRORE: GEMINI_API_KEY non trovata. Verifica le impostazioni su Vercel o AI Studio.");
+      console.error("ERRORE: GEMINI_API_KEY non trovata. Verifica i Secrets di AI Studio o le variabili di Vercel.");
     }
     return new GoogleGenAI({ apiKey: key || 'MISSING_KEY' });
   }, []);
+
+  const isApiKeyMissing = React.useMemo(() => {
+    // @ts-ignore
+    const k = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+    return !k || k === 'MY_GEMINI_API_KEY' || k === 'MISSING_KEY' || k === 'undefined' || k === '';
+  }, []);
+
+  const [showApiKeyGuide, setShowApiKeyGuide] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [fascicoli, setFascicoli] = useState<Fascicolo[]>([]);
   const [activeFascicoloId, setActiveFascicoloId] = useState<number | null>(null);
@@ -790,7 +800,7 @@ REGOLE (TASSATIVE):
     setIsLoading(true);
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3-flash-preview",
         contents: `Esegui una ricerca completa e approfondita su: "${query}".
 Fornisci un report dettagliato, strutturato e strategico.`,
         config: {
@@ -947,7 +957,7 @@ Nuova richiesta: ${input}`;
       }, 1500);
 
       let responseStream = await ai.models.generateContentStream({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: promptContents,
         config: {
           systemInstruction,
@@ -1023,7 +1033,7 @@ Nuova richiesta: ${input}`;
           promptContents.push(assistantContent, userContent);
 
           responseStream = await ai.models.generateContentStream({
-            model: 'gemini-1.5-flash',
+            model: 'gemini-3-flash-preview',
             contents: promptContents,
             config: {
               systemInstruction,
@@ -1360,7 +1370,7 @@ Nuova richiesta: ${input}`;
       }
 
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-pro",
+        model: "gemini-3.1-pro-preview",
         contents,
         config: {
           responseMimeType: "application/json",
@@ -1501,7 +1511,7 @@ Nuova richiesta: ${input}`;
         let title = `Nota_${new Date().toISOString().slice(0, 10)}`;
         try {
           const titleRes = await ai.models.generateContent({
-            model: "gemini-1.5-flash",
+            model: "gemini-3-flash-preview",
             contents: `Genera un titolo brevissimo (max 5 parole) e professionale per questa nota: "${content.substring(0, 500)}"`,
           });
           if (titleRes.text) {
@@ -1584,6 +1594,58 @@ Nuova richiesta: ${input}`;
 
   return (
     <div className="flex flex-col h-[100dvh] w-full overflow-x-hidden bg-[#E5DDD5]">
+      {/* Warning Chiave API Mancante */}
+      {isApiKeyMissing && (
+        <div className="fixed top-0 left-0 w-full bg-red-600 text-white p-2 text-center z-[9999] text-xs font-bold animate-pulse flex items-center justify-center gap-4">
+          <span>⚠️ CHIAVE API GEMINI NON TROVATA. L'AI NON FUNZIONERÀ.</span>
+          <button 
+            onClick={() => setShowApiKeyGuide(true)}
+            className="bg-white text-red-600 px-2 py-1 rounded shadow-sm hover:bg-gray-100 transition-colors"
+          >
+            Configura Ora
+          </button>
+        </div>
+      )}
+
+      {/* Guida Configurazione API Key */}
+      {showApiKeyGuide && (
+        <div className="fixed inset-0 bg-black/80 z-[10000] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <Sparkles className="text-blue-600" /> Configurazione AI
+            </h2>
+            <div className="space-y-4 text-sm text-gray-700">
+              <p>Per attivare l'intelligenza di Smart Secretary, devi inserire la tua chiave API di Google Gemini.</p>
+              
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                <p className="font-bold text-blue-800 mb-1">Se sei su AI Studio:</p>
+                <ol className="list-decimal ml-4 space-y-1">
+                  <li>Clicca sull'icona della <strong>Chiave (Secrets)</strong> nel menu a sinistra.</li>
+                  <li>Aggiungi una nuova variabile chiamata <code>GEMINI_API_KEY</code>.</li>
+                  <li>Incolla la tua chiave API (inizia con <code>AIza...</code>).</li>
+                </ol>
+              </div>
+
+              <div className="bg-purple-50 p-3 rounded-lg border border-purple-100">
+                <p className="font-bold text-purple-800 mb-1">Se sei su Vercel:</p>
+                <ol className="list-decimal ml-4 space-y-1">
+                  <li>Vai in <strong>Settings &gt; Environment Variables</strong>.</li>
+                  <li>Aggiungi <code>VITE_GEMINI_API_KEY</code>.</li>
+                  <li>Fai un <strong>Redeploy</strong> dell'applicazione.</li>
+                </ol>
+              </div>
+
+              <p className="text-xs text-gray-500 italic">Dopo aver aggiunto la chiave, ricarica questa pagina.</p>
+            </div>
+            <button 
+              onClick={() => setShowApiKeyGuide(false)}
+              className="mt-6 w-full bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-gray-800 transition-colors"
+            >
+              Ho capito, chiudi
+            </button>
+          </div>
+        </div>
+      )}
       <header className="p-4 bg-[#075E54] text-white font-bold text-lg shadow-md w-full flex justify-between items-center">
         <div className="flex gap-4">
           <button onClick={() => setActiveView('chat')} className={activeView === 'chat' ? 'opacity-100' : 'opacity-50'} title="Chat"><MessageSquare className="w-6 h-6" /></button>

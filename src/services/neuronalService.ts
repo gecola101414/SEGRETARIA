@@ -1,18 +1,23 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { db, NeuronalPacket } from "../db/database";
 
-// @ts-ignore
-let apiKey = (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined) || import.meta.env.VITE_GEMINI_API_KEY;
-if (apiKey) {
-  apiKey = apiKey.trim();
-  if (apiKey === 'MY_GEMINI_API_KEY' || apiKey === 'MISSING_KEY') apiKey = '';
-}
-const ai = new GoogleGenAI({ apiKey: apiKey || 'MISSING_KEY' });
+const getAI = () => {
+  // @ts-ignore
+  let key = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+  if (key) {
+    key = String(key).trim();
+    if (key === 'MY_GEMINI_API_KEY' || key === 'MISSING_KEY' || key === 'undefined' || key === 'null' || key === '') {
+      key = '';
+    }
+  }
+  return new GoogleGenAI({ apiKey: key || 'MISSING_KEY' });
+};
 
 export const analyzeNeuronalContext = async (messageContent: string, messageId: number) => {
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3-flash-preview",
       contents: `Analizza il seguente messaggio dell'utente e spacchettalo in "pacchetti neuronali" di conoscenza. 
 Estrai fatti, preferenze, entità menzionate, contesto emotivo, obiettivi, relazioni o abilità apprese (learned_skill).
 Sii estremamente analitico e "geloso" di queste informazioni, come se stessi costruendo l'anima e la memoria profonda del tuo assistito.
@@ -67,11 +72,12 @@ Restituisci un array JSON di oggetti con questa struttura:
 
 export const evolveAnima = async () => {
   try {
+    const ai = getAI();
     const allPackets = await db.neuronalPackets.toArray();
     if (allPackets.length < 5) return null;
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3-flash-preview",
       contents: `Sei l'Anima di Smart Secretary Pro22. Il tuo compito è EVOLVERE.
 Analizza i seguenti pacchetti di conoscenza estratti dalle interazioni passate e crea una NUOVA CONNESSIONE NEURONALE (learned_skill) che sintetizzi un nuovo comportamento, una procedura ottimizzata o un'intuizione profonda sul tuo assistito.
 Questa connessione deve essere "itinerante" e "simbiotica", adattandosi alle reali esigenze dell'utente.
